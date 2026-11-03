@@ -14,7 +14,7 @@ from ..state import Journal, PersistentState
 from ..totp import TotpGuard, TotpResult
 from .config import ServerConfig
 from .guard import GuardError, GuardRevoked, GuardTooFresh, SessionGuard, SessionInfo
-from .hub import OLD_AGENT, UNKNOWN_COMMAND, AgentLink, CommandResult, Hub
+from .hub import OLD_AGENT, UNKNOWN_COMMAND, AgentLink, CommandResult, Hub, window_key
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +57,7 @@ class Server:
         self.guard: SessionGuard | None = None
         self.guard_problem = "подключается…" if cfg.api_id else "не настроен (нет TG_API_ID / TG_API_HASH)"
         self.listed_sessions: list[SessionInfo] = []
+        self.listed_windows: dict[str, list[dict]] = {}  # компьютер -> окна из последнего «Что запущено»
         self._terminating = False
         self._last_bad_auth_alert = 0.0
         self._tasks: set[asyncio.Task] = set()
@@ -263,7 +264,15 @@ class Server:
         return (base64.b64decode(jpeg) if jpeg else None), result
 
     async def apps(self, name: str) -> CommandResult:
-        return await self.hub.command(name, "apps")
+        result = await self.hub.command(name, "apps")
+        if result.ok:
+            # Запоминаем список: подтверждение «Закрыть …?» показывает окно по его ключу из кнопки
+            self.listed_windows[name] = (result.data or {}).get("windows") or []
+        return result
+
+    def window(self, name: str, key: str) -> dict | None:
+        """Окно из последнего списка «Что запущено» по ключу «PID-HWND»."""
+        return next((w for w in self.listed_windows.get(name, []) if window_key(w) == key), None)
 
     # ---------- действия из меню и кнопок ----------
 
@@ -314,7 +323,7 @@ class Server:
 AGENT_ACTIONS = {
     "lock": "lock", "isolate": "isolate", "unisolate": "unisolate", "arm": "arm", "disarm": "disarm",
     "selftest": "selftest", "unblock": "unblock", "unblock_all": "unblock",
-    "pet_on": "pet", "pet_say": "pet", "pet_off": "pet_off",
+    "pet_on": "pet", "pet_say": "pet", "pet_off": "pet_off", "close": "close",
 }
 INCIDENT_ACTIONS = ("kill", "block", "quarantine", "trust")
 
@@ -328,6 +337,9 @@ def _agent_args(action: str, extra: str) -> dict:
         return {"mood": extra}
     if action == "pet_say":  # свой текст — со следящим питомцем
         return {"mood": "watch", "text": extra}
+    if action == "close":
+        pid, _, hwnd = extra.partition("-")
+        return {"pid": int(pid) if pid.isdigit() else 0, "hwnd": int(hwnd) if hwnd.isdigit() else 0}
     return {}
 
 

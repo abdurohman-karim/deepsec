@@ -22,6 +22,11 @@ UNKNOWN_COMMAND = "неизвестная команда"  # так отвеча
 OLD_AGENT = "На компьютере старый агент — он этого не умеет. Поставьте новую версию установщика поверх."
 
 
+def window_key(window: dict) -> str:
+    """Ключ окна из списка «Что запущено» для кнопки: «PID-HWND» (двоеточие — разделитель callback_data)."""
+    return f"{window.get('pid')}-{window.get('hwnd')}"
+
+
 @dataclass
 class AgentLink:
     name: str

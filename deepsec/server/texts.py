@@ -229,8 +229,18 @@ def apps(name: str, result: CommandResult, notice: str = "") -> str:
     background = data.get("background") or []
     if background:
         lines.append("\n<b>В фоне:</b> " + ", ".join(f"<code>{escape(n)}</code>" for n in background))
-    lines.append(f"\n🕒 {local(time.time()):%H:%M:%S} · ▶️ активное окно, ➖ свёрнуто")
+    hint = " · ✖ — закрыть окно" if any(w.get("hwnd") for w in windows) else ""
+    lines.append(f"\n🕒 {local(time.time()):%H:%M:%S} · ▶️ активное окно, ➖ свёрнуто{hint}")
     return _with_notice(_fit("\n".join(lines)), notice)
+
+
+def confirm_close(name: str, window: dict | None) -> str:
+    if window is None:
+        return "Список окон устарел — откройте «📋 Что запущено» заново."
+    return (f"✖ Закрыть <code>{escape(window.get('exe', '?'))}</code> — «{escape(window.get('title', ''))}» "
+            f"на <b>{escape(name)}</b>?\n\nСначала как крестиком — программа успеет сохраниться. Если за "
+            "несколько секунд не закроется (зависла или спрашивает «Вы уверены?») — будет завершена "
+            "принудительно, несохранённое пропадёт.")
 
 
 def _fit(text: str) -> str:

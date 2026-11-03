@@ -9,6 +9,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from ..incidents import Incident, Kind, Severity
 from ..protocol import PET_MOODS
+from .hub import window_key
 from .texts import ICONS, PET_LABELS, local
 
 if TYPE_CHECKING:
@@ -18,6 +19,8 @@ if TYPE_CHECKING:
 
 FILE_KINDS = (Kind.TDATA_ACCESS, Kind.DECOY_ACCESS)
 LOCK = "🔑"
+MAX_BUTTON = 48  # символов в подписи кнопки — длиннее Telegram обрезает некрасиво
+MAX_CLOSE_BUTTONS = 15
 
 
 class Btn(CallbackData, prefix="b"):
@@ -81,8 +84,18 @@ def pc(agent: AgentLink | None) -> InlineKeyboardMarkup:
     return _markup(*rows)
 
 
-def apps(name: str) -> InlineKeyboardMarkup:
-    return _markup([_b("📸 Скриншот", "shot", name), _b("🔄 Обновить", "apps", name)], _back("pc", name))
+def apps(name: str, windows: list[dict] = ()) -> InlineKeyboardMarkup:
+    # Старые агенты не присылают HWND — тогда закрывать нечем, кнопок нет
+    rows = [[_b(f"✖ {w.get('exe', '?')} · {w.get('title', '')}"[:MAX_BUTTON], "close_q", name, window_key(w))]
+            for w in windows[:MAX_CLOSE_BUTTONS] if w.get("hwnd")]
+    rows.append([_b("📸 Скриншот", "shot", name), _b("🔄 Обновить", "apps", name)])
+    rows.append(_back("pc", name))
+    return _markup(*rows)
+
+
+def confirm_close(name: str, key: str, found: bool) -> InlineKeyboardMarkup:
+    yes = [_b("✖ Да, закрыть", "close", name, key)] if found else None
+    return _markup(yes, [_b("↩️ Отмена", "apps", name)])
 
 
 def pet(agent: AgentLink | None) -> InlineKeyboardMarkup:

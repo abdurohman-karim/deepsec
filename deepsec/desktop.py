@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ MAX_SIDE = 2560  # Telegram всё равно ужмёт фото до 2560 px �
 JPEG_QUALITY = 70
 MAX_TITLE = 100
 MAX_BACKGROUND = 40
+CLOSE_WAIT = 6  # сек: столько ждём, что программа закроется сама, прежде чем агент её завершит
 SYSTEM_ROOT = os.environ.get("SystemRoot", r"C:\Windows")
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -59,9 +61,9 @@ def helper_args(cmdline: list[str]) -> list[str]:
     return []
 
 
-def run_in_user_session(what: str, timeout: float = HELPER_TIMEOUT) -> dict[str, Any]:
+def run_in_user_session(what: str, *args: str, timeout: float = HELPER_TIMEOUT) -> dict[str, Any]:
     session = _require_session()
-    cmd, cwd = helper_command("desktop", what)
+    cmd, cwd = helper_command("desktop", what, *args)
     if _same_session(session):
         # Агент запущен не от SYSTEM, а в том же сеансе (отладка из исходников) — токен не нужен.
         try:
@@ -208,9 +210,13 @@ def parse_output(raw: bytes) -> dict[str, Any]:
 
 # ---------- помощник (сеанс пользователя) ----------
 
-def helper_main(what: str) -> int:
+def helper_main(what: str, args: list[str] | None = None) -> int:
     try:
-        data = collect(what)
+        if what == "close":
+            pid, hwnd = (int(a) for a in (args or [])[:2])
+            data = close_window(pid, hwnd)
+        else:
+            data = collect(what)
     except Exception as e:
         data = {"error": f"ошибка — {e}"}
     sys.stdout.write(json.dumps(data, ensure_ascii=True) + "\n")
@@ -243,6 +249,31 @@ def collect(what: str) -> dict[str, Any]:
         data["windows"] = windows
         data["background"] = background_names(_session_processes(), {w["exe"].lower() for w in windows})
     return data
+
+
+def close_window(pid: int, hwnd: int, wait: float = CLOSE_WAIT) -> dict[str, Any]:
+    """Закрывает окно как крестиком (WM_CLOSE) и ждёт. Не закрылось — решает агент: добивать ли процесс."""
+    import win32con
+    import win32gui
+    import win32process
+
+    if not win32gui.IsWindow(hwnd) or win32process.GetWindowThreadProcessId(hwnd)[1] != pid:
+        return {"error": "этого окна уже нет — обновите список"}  # заодно защита от чужого PID
+    info = {"exe": _exe_name(pid), "title": win32gui.GetWindowText(hwnd)[:MAX_TITLE], "path": _exe_path(pid)}
+    win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline:
+        if not win32gui.IsWindow(hwnd) or not psutil.pid_exists(pid):
+            return {**info, "closed": True}
+        time.sleep(0.2)
+    return {**info, "closed": False}
+
+
+def _exe_path(pid: int) -> str:
+    try:
+        return psutil.Process(pid).exe()
+    except psutil.Error:
+        return ""
 
 
 def _input_desktop() -> str:
@@ -296,7 +327,7 @@ def _windows(foreground: int) -> list[dict[str, Any]]:
         if not title or win32gui.GetClassName(hwnd) == "Progman" or _cloaked(hwnd):
             return True
         _, pid = win32process.GetWindowThreadProcessId(hwnd)
-        found.append({"title": title[:MAX_TITLE], "exe": _exe_name(pid), "pid": pid,
+        found.append({"title": title[:MAX_TITLE], "exe": _exe_name(pid), "pid": pid, "hwnd": hwnd,
                       "minimized": bool(win32gui.IsIconic(hwnd)), "active": hwnd == foreground})
         return True
 

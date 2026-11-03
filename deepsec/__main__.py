@@ -56,7 +56,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("uninstall", help="убрать задачу, правила брандмауэра, ловушки и настройки")
     sub.add_parser("version", help="версия; заодно проверяет, что сборка цела")
     desktop_cmd = sub.add_parser("desktop", help="служебная: агент запускает её в сеансе пользователя")
-    desktop_cmd.add_argument("what", choices=("screenshot", "apps"))
+    desktop_cmd.add_argument("what", choices=("screenshot", "apps", "close"))
+    desktop_cmd.add_argument("args", nargs="*", help="для close: PID и HWND окна")
     pet_cmd = sub.add_parser("pet", help="пиксельный питомец в углу экрана (агент запускает его по команде из бота)")
     pet_cmd.add_argument("mood", choices=PET_MOODS)
     pet_cmd.add_argument("--text", default="", help="своя надпись вместо стандартной")
@@ -85,7 +86,7 @@ def _dispatch(args: argparse.Namespace) -> int:
     if args.command == "desktop":
         from . import desktop
 
-        return desktop.helper_main(args.what)
+        return desktop.helper_main(args.what, args.args)
     if args.command == "pet":
         from . import pet
 

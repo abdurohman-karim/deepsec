@@ -21,14 +21,15 @@ AFTER = {
     "terminate": "home", "lockdown_off": "home",
     "sess_kill": "sessions", "sess_trust": "sess", "sess_untrust": "sess",
     "pet_on": "pet", "pet_off": "pet", "pet_say": "pet", "pet_text": "pet",
+    "close": "apps",
 }
 SCREENS = frozenset({"home", "pc", "blocks", "incidents", "inc", "sessions", "sess", "help",
-                     "confirm_isolate", "confirm_terminate", "pet"})
+                     "confirm_isolate", "confirm_terminate", "pet", "close_q"})
 # Экраны, для которых сервер ждёт ответа компьютера (несколько секунд).
 SLOW_SCREENS = frozenset({"apps"})
 
 
-async def build(server: Server, screen: str, target: str = "", notice: str = "") -> Screen:
+async def build(server: Server, screen: str, target: str = "", notice: str = "", extra: str = "") -> Screen:
     if screen == "pc":
         agent = server.hub.agents.get(target)
         return texts.pc(agent, notice), kb.pc(agent)
@@ -39,7 +40,12 @@ async def build(server: Server, screen: str, target: str = "", notice: str = "")
         agent = server.hub.agents.get(target)
         return texts.pet(agent, notice), kb.pet(agent)
     if screen == "apps":
-        return texts.apps(target, await server.apps(target), notice), kb.apps(target)
+        result = await server.apps(target)
+        windows = (result.data or {}).get("windows") or [] if result.ok else []
+        return texts.apps(target, result, notice), kb.apps(target, windows)
+    if screen == "close_q":
+        window = server.window(target, extra)
+        return texts.confirm_close(target, window), kb.confirm_close(target, extra, window is not None)
     if screen == "incidents":
         items = server.journal.last(10)
         return texts.incidents(items, notice), kb.incidents(items)

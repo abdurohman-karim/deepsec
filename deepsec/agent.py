@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import ntpath
 import os
 import time
 from collections.abc import Awaitable
@@ -30,6 +31,8 @@ FILE_INCIDENTS = (Kind.TDATA_ACCESS, Kind.DECOY_ACCESS)
 MERGE_WINDOW = 60  # сек: повторные чтения тем же процессом дописываются в первый инцидент
 NOTIFY_DELAY = 1.5  # сек: даём стилеру «дочитать», чтобы в уведомлении был полный список файлов
 SELFTEST_TIMEOUT = 15
+# Проводник держит рабочий стол и панель задач: его окна закрываем только мягко, процесс не завершаем.
+NEVER_FORCE = frozenset({"explorer.exe"})
 
 
 class Agent:
@@ -225,6 +228,8 @@ class Agent:
                 return self._result(await self.act_pet(str(args.get("mood") or ""), str(args.get("text") or "")))
             case "pet_off":
                 return self._result(await self.act_pet_off())
+            case "close":
+                return self._result(await self.act_close(int(args.get("pid") or 0), int(args.get("hwnd") or 0)))
         return False, f"неизвестная команда {action}", None
 
     async def look_at_desktop(self, what: str) -> tuple[bool, str, Any]:
@@ -324,6 +329,24 @@ class Agent:
             self.link.push_status()
             return "убран" if count else "его и так не было на экране"
         return await self._safe("👁 Глаз", do())
+
+    async def act_close(self, pid: int, hwnd: int) -> str:
+        """Закрыть окно со страницы «Что запущено»: сначала как крестиком, не вышло — завершить процесс."""
+        async def do() -> str:
+            log.info("Сервер закрывает окно %s процесса %s", hwnd, pid)
+            data = await asyncio.to_thread(desktop.run_in_user_session, "close", str(pid), str(hwnd))
+            if data.get("error"):
+                raise desktop.DesktopError(data["error"])
+            name = data.get("exe") or f"PID {pid}"
+            if data.get("closed"):
+                return f"{name} закрыт"
+            path = str(data.get("path") or "")
+            if (ntpath.basename(path).lower() in NEVER_FORCE or response.is_protected(pid, path)
+                    or norm_path(path) == norm_path(self.own_exe)):
+                return f"{name} не закрылся сам (ждёт ответа в своём окне?) — принудительно не закрываю"
+            killed = await asyncio.to_thread(response.kill_tree, pid, path)
+            return f"{name} не закрылся сам за {desktop.CLOSE_WAIT} с — {killed}"
+        return await self._safe("✖ Окно", do())
 
     def pet_mood(self) -> str:
         """Настроение питомца на экране или пустая строка (его убрали, вышел срок, пользователь вышел)."""

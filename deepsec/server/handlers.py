@@ -117,7 +117,7 @@ def build_router(owner_id: int) -> Router:
             text, markup = screens.code_prompt(action)
         elif action in screens.SCREENS:
             await state.clear()
-            text, markup = await screens.build(server, action, target)
+            text, markup = await screens.build(server, action, target, extra=extra)
         else:
             await query.answer("⏳")  # действие может занять несколько секунд
             notice = await server.perform(action, target, extra)

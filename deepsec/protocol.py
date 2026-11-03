@@ -17,7 +17,7 @@ HEARTBEAT = 30  # сек: ping WebSocket и отправка статуса
 # Команды, которые сервер может отдать агенту.
 ACTIONS = frozenset({
     "status", "selftest", "arm", "disarm", "lock", "isolate", "unisolate",
-    "kill", "block", "unblock", "quarantine", "trust", "screenshot", "apps", "pet", "pet_off",
+    "kill", "block", "unblock", "quarantine", "trust", "screenshot", "apps", "pet", "pet_off", "close",
 })
 # Настроения пиксельного питомца на экране компьютера.
 PET_MOODS = ("watch", "happy", "angry", "sleep")
