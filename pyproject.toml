@@ -1,0 +1,9 @@
+[project]
+name = "deepsec"
+version = "0.1.0"
+description = "Защита сессий Telegram Desktop на Windows с управлением через Telegram-бота"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = [".", "tests"]
+testpaths = ["tests"]
