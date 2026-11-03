@@ -10,7 +10,7 @@ from conftest import event_xml
 from deepsec.config import Config, ConfigError, parse_trusted
 from deepsec.incidents import Incident, Kind, Severity
 from deepsec.monitors.processes import RemoteToolWatcher
-from deepsec.state import Journal, State
+from deepsec.state import AgentState, Journal
 from deepsec.totp import MAX_FAILURES, TotpGuard
 from deepsec.trust import Signature, TrustChecker, parse_subject, signer_matches
 from deepsec.winevent import parse_event_xml
@@ -31,12 +31,36 @@ def test_parse_trusted():
 
 
 def test_config_requires_keys():
-    with pytest.raises(ConfigError, match="TOTP_SECRET"):
-        Config.from_mapping({"BOT_TOKEN": "x", "OWNER_ID": "1", "TDATA_DIRS": r"C:\t"})
+    with pytest.raises(ConfigError, match="SERVER_FINGERPRINT"):
+        Config.from_mapping({"SERVER_URL": "wss://1.2.3.4:8443/agent", "AGENT_TOKEN": "t", "TDATA_DIRS": r"C:\t"})
     cfg = Config.from_mapping({
-        "BOT_TOKEN": "x", "OWNER_ID": "1", "TOTP_SECRET": "s", "TDATA_DIRS": r"C:\a;C:\b", "AUTO_LOCK": "yes",
+        "SERVER_URL": "wss://1.2.3.4:8443/agent", "SERVER_FINGERPRINT": "AB:CD", "AGENT_TOKEN": "t",
+        "TDATA_DIRS": r"C:\a;C:\b", "AUTO_LOCK": "yes", "AGENT_NAME": "Work",
     })
-    assert cfg.tdata_dirs == (r"C:\a", r"C:\b") and cfg.auto_lock and cfg.auto_kill
+    assert cfg.tdata_dirs == (r"C:\a", r"C:\b") and cfg.auto_lock and cfg.auto_kill and cfg.agent_name == "Work"
+
+
+def test_server_config_requires_keys():
+    from deepsec.server.config import ServerConfig
+
+    with pytest.raises(ConfigError, match="AGENT_TOKEN"):
+        ServerConfig.from_mapping({"BOT_TOKEN": "x", "OWNER_ID": "1", "TOTP_SECRET": "s"})
+
+
+def test_normalize_fingerprint():
+    from deepsec.protocol import normalize_fingerprint
+
+    assert normalize_fingerprint("sha256 Fingerprint=AB:CD:0F") == "abcd0f"
+
+
+def test_outbox_survives_restart(tmp_path):
+    from deepsec.state import Outbox
+
+    box = Outbox(tmp_path / "outbox.json", limit=2)
+    for key in ("a", "b", "c"):
+        box.add(key, {"n": key})
+    box.ack("b")
+    assert Outbox(tmp_path / "outbox.json").items() == [("c", {"n": "c"})]
 
 
 def test_parse_subject_with_quoted_commas():
@@ -116,12 +140,12 @@ def test_remote_tool_watcher_reports_only_new():
 
 
 def test_state_and_journal_roundtrip(tmp_path):
-    state = State.load(tmp_path / "state.json")
+    state = AgentState.load(tmp_path / "state.json")
     assert state.armed
     state.armed = False
     state.blocked["DeepSec-Block-1"] = r"C:\x.exe"
     state.save()
-    assert State.load(tmp_path / "state.json").blocked == {"DeepSec-Block-1": r"C:\x.exe"}
+    assert AgentState.load(tmp_path / "state.json").blocked == {"DeepSec-Block-1": r"C:\x.exe"}
 
     journal = Journal(tmp_path / "incidents.jsonl")
     inc = Incident(Kind.TDATA_ACCESS, Severity.CRITICAL, "t", pid=5, files=["a"])

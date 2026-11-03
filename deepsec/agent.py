@@ -1,26 +1,25 @@
-"""Агент: связывает журнал событий, детектор, реакцию и бота в одном asyncio-процессе."""
+"""Windows-агент: журнал событий → детектор → локальная реакция → инцидент на сервер (там бот и сторож)."""
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
-import platform
 import time
 from collections.abc import Awaitable
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import psutil
 
-from . import response, winacl
-from .bot import Notifier, build_dispatcher, create_bot, set_commands
+from . import __version__, response, winacl
 from .config import Config
 from .detector import Detector, norm_path
 from .incidents import Incident, Kind, Severity
+from .link import Link
 from .monitors.eventlog import SecurityLogSubscription
 from .monitors.processes import RemoteToolWatcher
-from .state import Journal, State
-from .totp import TotpGuard, TotpResult
+from .state import AgentState, Journal, Outbox
 from .trust import TrustChecker, sha256_file
 from .winevent import parse_event_xml
 
@@ -37,12 +36,11 @@ class Agent:
         self.cfg = cfg
         data_dir = Path(cfg.data_dir)
         data_dir.mkdir(parents=True, exist_ok=True)
-        self.state = State.load(data_dir / "state.json")
+        self.state = AgentState.load(data_dir / "state.json")
         self.journal = Journal(data_dir / "incidents.jsonl")
         self.trust = TrustChecker(cfg.trusted, lambda: self.state.trusted_hashes.keys())
         self.detector = Detector(cfg, self.trust, os.getpid())
-        self.totp = TotpGuard(cfg.totp_secret)
-        self.notifier: Notifier | None = None
+        self.link = Link(cfg, Outbox(data_dir / "outbox.json"), self.execute, self.status)
         self.audit_ok: bool | None = None
         self.started = datetime.now(timezone.utc)
         self.own_exe = psutil.Process().exe()
@@ -53,27 +51,18 @@ class Agent:
     # ---------- запуск ----------
 
     async def run(self) -> None:
-        bot = create_bot(self.cfg.bot_token)
-        dp = build_dispatcher(self)
-        self.notifier = Notifier(bot, self.cfg.owner_id)
-
         # Мониторинг включаем первым делом — сеть при загрузке Windows может появиться не сразу.
         subscription = SecurityLogSubscription(asyncio.get_running_loop(), self._events)
         subscription.start()
-        mode = "🟢 авто-реакция" if self.state.armed else "🟡 только уведомления"
-        self.notifier.send(f"🛡 DeepSec запущен на <b>{platform.node()}</b>. Режим: {mode}. Проверяю аудит…")
         try:
             async with asyncio.TaskGroup() as tg:
                 tg.create_task(asyncio.to_thread(self._reapply_audit))
-                tg.create_task(set_commands(bot))
-                tg.create_task(self.notifier.run())
+                tg.create_task(self.link.run())
                 tg.create_task(self._consume_events())
                 tg.create_task(self._selftest_loop())
                 tg.create_task(self._watch_remote_tools())
-                tg.create_task(dp.start_polling(bot, handle_signals=False))
         finally:
             subscription.close()
-            await bot.session.close()
 
     def _reapply_audit(self) -> None:
         # Если вы перелогинились в Telegram, папка аккаунта в tdata новая и без аудита — повесим заново.
@@ -83,6 +72,20 @@ class Agent:
                     winacl.protect_tdata(Path(tdata))
             except Exception:
                 log.exception("Не удалось включить аудит на %s", tdata)
+
+    def status(self) -> dict:
+        return {
+            "name": self.cfg.agent_name,
+            "version": __version__,
+            "armed": self.state.armed,
+            "isolated": self.state.isolated,
+            "audit_ok": self.audit_ok,
+            "blocked": dict(self.state.blocked),
+            "trusted_exes": len(self.state.trusted_hashes),
+            "tdata": len(self.cfg.tdata_dirs),
+            "decoys": len(self.cfg.decoy_dirs),
+            "started": self.started.isoformat(),
+        }
 
     # ---------- обработка событий ----------
 
@@ -107,18 +110,20 @@ class Agent:
                 return
             self._recent[key] = (inc, now)
 
-        # Сначала реагируем (каждая миллисекунда на счету), потом уведомляем.
-        if inc.respond and self.state.armed:
+        # Сначала реагируем (каждая миллисекунда на счету), потом сообщаем серверу.
+        # Завершение сеансов Telegram делает сервер — он получит инцидент с флагом armed.
+        armed = self.state.armed
+        if inc.respond and armed:
             await self._auto_respond(inc)
         delay = NOTIFY_DELAY if inc.kind in FILE_INCIDENTS else 0
-        self._spawn(self._publish(inc, delay))
+        self._spawn(self._publish(inc, delay, armed))
 
-    async def _publish(self, inc: Incident, delay: float) -> None:
+    async def _publish(self, inc: Incident, delay: float, armed: bool) -> None:
         if delay:
             await asyncio.sleep(delay)
+        inc.host = self.cfg.agent_name
         self.journal.add(inc)
-        if self.notifier:
-            self.notifier.incident(inc)
+        self.link.send_incident(inc, armed)
 
     async def _auto_respond(self, inc: Incident) -> None:
         if self.cfg.auto_kill and not response.is_protected(inc.pid, inc.process_path):
@@ -149,18 +154,24 @@ class Agent:
     async def _selftest_loop(self) -> None:
         await asyncio.sleep(3)
         while True:
-            ok = await self.run_selftest()
-            if ok != self.audit_ok:
-                if ok:
-                    self.notifier.send("✅ Самопроверка: аудит работает, чтение tdata отслеживается", silent=True)
-                else:
-                    await self.handle(Incident(
-                        Kind.SELFTEST, Severity.CRITICAL,
-                        "Самопроверка провалена: Windows не сообщает о чтении файлов",
-                        details={"проверьте": "запущен ли агент от SYSTEM и выполнен ли setup; не отключал ли кто-то аудит"},
-                    ))
-            self.audit_ok = ok
+            await self._selftest_and_report()
             await asyncio.sleep(self.cfg.selftest_interval)
+
+    async def _selftest_and_report(self) -> bool:
+        ok = await self.run_selftest()
+        if ok != self.audit_ok:
+            if ok:
+                await self.handle(Incident(Kind.SELFTEST, Severity.INFO,
+                                           "Самопроверка: аудит работает, чтение tdata отслеживается"))
+            else:
+                await self.handle(Incident(
+                    Kind.SELFTEST, Severity.CRITICAL,
+                    "Самопроверка провалена: Windows не сообщает о чтении файлов",
+                    details={"проверьте": "запущен ли агент от SYSTEM и выполнен ли setup; не отключал ли кто-то аудит"},
+                ))
+        self.audit_ok = ok
+        self.link.push_status()
+        return ok
 
     async def _watch_remote_tools(self) -> None:
         watcher = RemoteToolWatcher()
@@ -172,12 +183,51 @@ class Agent:
                 ))
             await asyncio.sleep(self.cfg.process_poll_interval)
 
-    # ---------- действия (вызываются авто-реакцией и кнопками бота) ----------
+    # ---------- команды с сервера ----------
+
+    async def execute(self, action: str, args: dict) -> tuple[bool, str, Any]:
+        """Сервер уже проверил владельца и TOTP — здесь только выполняем."""
+        path = str(args.get("path") or "")
+        match action:
+            case "status":
+                return True, "", None
+            case "selftest":
+                ok = await self._selftest_and_report()
+                return ok, "аудит работает" if ok else "событие не пришло — аудит не работает", None
+            case "arm" | "disarm":
+                self.state.armed = action == "arm"
+                self.state.save()
+                return True, "авто-реакция включена" if self.state.armed else "только уведомления", None
+            case "kill":
+                return self._result(await self.act_kill(int(args["pid"]), path or None))
+            case "block":
+                return self._result(await self.act_block(path))
+            case "unblock":
+                rules = list(self.state.blocked) if args.get("rule") == "*" else [str(args.get("rule"))]
+                results = [await self.act_unblock(r) for r in rules]
+                return all("ошибка" not in r for r in results), "\n".join(results) or "нечего снимать", None
+            case "quarantine":
+                return self._result(await self.act_quarantine(path))
+            case "trust":
+                return self._result(await self.trust_process(path))
+            case "lock":
+                return self._result(await self.act_lock())
+            case "isolate":
+                return self._result(await self.act_isolate())
+            case "unisolate":
+                return self._result(await self.act_unisolate())
+        return False, f"неизвестная команда {action}", None
+
+    @staticmethod
+    def _result(text: str) -> tuple[bool, str, Any]:
+        return "ошибка" not in text, text, None
+
+    # ---------- действия ----------
 
     def _refuse_own_exe(self, path: str) -> None:
-        # Тот же python.exe, на котором работает агент: запрет сети отрезал бы самого агента от бота.
+        # Тот же python.exe, на котором работает агент: запрет сети отрезал бы самого агента от сервера.
         if norm_path(path) == norm_path(self.own_exe):
-            raise response.ResponseError("это интерпретатор самого агента — не блокирую, иначе бот потеряет связь")
+            raise response.ResponseError("это интерпретатор самого агента — не блокирую, иначе он потеряет связь")
 
     async def _safe(self, label: str, coro: Awaitable[str]) -> str:
         try:
@@ -214,14 +264,14 @@ class Agent:
         return await self._safe("📦 Карантин", do())
 
     async def act_lock(self) -> str:
-        return await self._safe("🔒 Сеансы", asyncio.to_thread(response.lock_sessions))
+        return await self._safe("🔒 Сеансы Windows", asyncio.to_thread(response.lock_sessions))
 
     async def act_isolate(self) -> str:
         async def do() -> str:
-            await asyncio.to_thread(response.isolate, psutil.Process().exe())
+            await asyncio.to_thread(response.isolate, self.own_exe)
             self.state.isolated = True
             self.state.save()
-            return "ПК отрезан от сети, на связи только агент. Вернуть: /unisolate КОД"
+            return "ПК отрезан от сети, на связи только агент"
         return await self._safe("🌐 Изоляция", do())
 
     async def act_unisolate(self) -> str:
@@ -240,34 +290,6 @@ class Agent:
             self.trust.invalidate()
             return f"{path} добавлен в доверенные (SHA-256 {digest[:16]}…). Если exe изменится — доверие пропадёт"
         return await self._safe("✅ Доверие", do())
-
-    def set_armed(self, armed: bool) -> None:
-        self.state.armed = armed
-        self.state.save()
-
-    def check_totp(self, code: str) -> TotpResult:
-        result = self.totp.check(code)
-        if result.locked_now:
-            self._spawn(self.handle(Incident(
-                Kind.TOTP_BRUTEFORCE, Severity.CRITICAL,
-                "Кто-то подбирает TOTP-код в боте — возможно, ваш аккаунт Telegram у злоумышленника",
-                details={"что сделать": "с телефона: Настройки → Устройства → завершить все другие сеансы"},
-            )))
-        return result
-
-    def status_text(self) -> str:
-        audit = {None: "⏳ проверяется", True: "✅ работает", False: "❌ НЕ работает"}[self.audit_ok]
-        uptime = datetime.now(timezone.utc) - self.started
-        lines = [
-            f"🛡 <b>DeepSec</b> на {platform.node()}",
-            f"Режим: {'🟢 авто-реакция' if self.state.armed else '🟡 только уведомления'}",
-            f"Аудит чтения tdata: {audit}",
-            f"Изоляция сети: {'🔴 включена' if self.state.isolated else 'выключена'}",
-            f"Работает: {str(uptime).split('.')[0]}",
-            f"Защищаемые tdata: {len(self.cfg.tdata_dirs)}, ловушки: {len(self.cfg.decoy_dirs)}",
-            f"Блокировок в брандмауэре: {len(self.state.blocked)}, доверенных exe: {len(self.state.trusted_hashes)}",
-        ]
-        return "\n".join(lines)
 
 
 def _touch_canary(path: Path) -> None:

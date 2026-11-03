@@ -5,15 +5,16 @@ import asyncio
 import ctypes
 import json
 import os
+import platform
 import sys
 from pathlib import Path
 
 import psutil
-import pyotp
 from dotenv import dotenv_values
 
 from . import winacl
 from .config import DEFAULT_DATA_DIR, DEFAULT_TRUSTED, PROJECT_DIR, parse_trusted, split_list
+from .protocol import AGENT_PATH, normalize_fingerprint
 from .trust import parse_subject, read_signature, signer_matches
 
 TASK_NAME = "DeepSec Agent"
@@ -78,18 +79,18 @@ def check_telegram_signatures(tdata_dirs: list[Path], trusted: dict[str, frozens
 
 
 def write_env(path: Path, existing: dict[str, str], tdata_dirs: list[Path], decoy_dirs: list[Path],
-              extra_signers: list[str]) -> None:
+              extra_signers: list[str]) -> dict[str, str]:
     env = dict(existing)
-    if not env.get("BOT_TOKEN"):
-        env["BOT_TOKEN"] = input("Токен бота от @BotFather: ").strip()
-    if not env.get("OWNER_ID"):
-        env["OWNER_ID"] = input("Ваш Telegram ID (узнать у @userinfobot): ").strip()
-    if not env.get("TOTP_SECRET"):
-        env["TOTP_SECRET"] = pyotp.random_base32()
-        uri = pyotp.TOTP(env["TOTP_SECRET"]).provisioning_uri(name="DeepSec", issuer_name="DeepSec")
-        print("\n🔑 Добавьте ключ в приложение-аутентификатор НА ТЕЛЕФОНЕ (Aegis, Google Authenticator, 2FAS):")
-        print(f"   Секрет: {env['TOTP_SECRET']}\n   Или URI: {uri}")
-        print("   Без него не получится отключить защиту из бота — сохраните секрет офлайн.\n")
+    if not env.get("SERVER_URL"):
+        print("\nДанные сервера показал ./deploy.sh при первой выкладке (их же можно посмотреть в .env на сервере).")
+        host = input("Адрес сервера (IP или домен): ").strip()
+        port = input("Порт агентов [8443]: ").strip() or "8443"
+        env["SERVER_URL"] = f"wss://{host}:{port}{AGENT_PATH}"
+    if not env.get("SERVER_FINGERPRINT"):
+        env["SERVER_FINGERPRINT"] = normalize_fingerprint(input("SHA-256 отпечаток сертификата сервера: "))
+    if not env.get("AGENT_TOKEN"):
+        env["AGENT_TOKEN"] = input("AGENT_TOKEN: ").strip()
+    env.setdefault("AGENT_NAME", platform.node())
     env["TDATA_DIRS"] = ";".join(str(p) for p in tdata_dirs)
     env["DECOY_DIRS"] = ";".join(str(p) for p in decoy_dirs)
     if extra_signers:
@@ -98,6 +99,7 @@ def write_env(path: Path, existing: dict[str, str], tdata_dirs: list[Path], deco
             trusted[name] = trusted.get(name, frozenset()) | set(extra_signers)
         env["TRUSTED_PROCESSES"] = ";".join(f"{n}={'|'.join(sorted(s))}" for n, s in trusted.items())
     path.write_text("".join(f"{k}={v}\n" for k, v in env.items()), "utf-8")
+    return env
 
 
 def setup() -> int:
@@ -169,7 +171,8 @@ def setup() -> int:
                         "-Command", _PS_REGISTER_TASK],
                        env={**os.environ, "DEEPSEC_PYTHON": str(python), "DEEPSEC_WORKDIR": str(PROJECT_DIR),
                             "DEEPSEC_TASK": TASK_NAME})
-    print(f"\n✅ Готово. Агент запущен; лог: {data_dir / 'agent.log'}. Проверьте бота: /status и /selftest")
+    print(f"\n✅ Готово. Агент запущен; лог: {data_dir / 'agent.log'}.\n"
+          "   В боте должен появиться компьютер — откройте его и нажмите «🧪 Самопроверка».")
     return 0
 
 

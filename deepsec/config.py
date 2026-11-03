@@ -1,7 +1,9 @@
+"""Настройки Windows-агента (C:\\ProgramData\\DeepSec\\.env)."""
 from __future__ import annotations
 
 import ntpath
 import os
+import platform
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -44,10 +46,11 @@ def parse_trusted(spec: str) -> dict[str, frozenset[str]]:
 
 @dataclass(frozen=True)
 class Config:
-    bot_token: str
-    owner_id: int
-    totp_secret: str
+    server_url: str  # wss://IP:8443/agent
+    server_fingerprint: str  # SHA-256 сертификата сервера (закреплён — подменить сервер нельзя)
+    agent_token: str
     tdata_dirs: tuple[str, ...]
+    agent_name: str = field(default_factory=platform.node)
     decoy_dirs: tuple[str, ...] = ()
     trusted: dict[str, frozenset[str]] = field(default_factory=lambda: parse_trusted(DEFAULT_TRUSTED))
     data_dir: str = DEFAULT_DATA_DIR
@@ -75,13 +78,16 @@ class Config:
 
     @classmethod
     def from_mapping(cls, env: dict[str, str]) -> Config:
-        missing = [k for k in ("BOT_TOKEN", "OWNER_ID", "TOTP_SECRET", "TDATA_DIRS") if not env.get(k)]
+        missing = [k for k in ("SERVER_URL", "AGENT_TOKEN", "TDATA_DIRS") if not env.get(k)]
+        if env.get("SERVER_URL", "").startswith("wss://") and not env.get("SERVER_FINGERPRINT"):
+            missing.append("SERVER_FINGERPRINT")
         if missing:
             raise ConfigError(f"В .env не заданы: {', '.join(missing)}")
         return cls(
-            bot_token=env["BOT_TOKEN"],
-            owner_id=int(env["OWNER_ID"]),
-            totp_secret=env["TOTP_SECRET"],
+            server_url=env["SERVER_URL"],
+            server_fingerprint=env.get("SERVER_FINGERPRINT") or "",
+            agent_token=env["AGENT_TOKEN"],
+            agent_name=env.get("AGENT_NAME") or platform.node(),
             tdata_dirs=split_list(env["TDATA_DIRS"]),
             decoy_dirs=split_list(env.get("DECOY_DIRS")),
             trusted=parse_trusted(env.get("TRUSTED_PROCESSES") or DEFAULT_TRUSTED),

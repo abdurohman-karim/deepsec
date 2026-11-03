@@ -1,0 +1,4 @@
+aiohttp>=3.9
+psutil>=5.9
+python-dotenv>=1.0
+pywin32>=306; sys_platform == "win32"

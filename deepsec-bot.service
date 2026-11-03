@@ -1,0 +1,16 @@
+[Unit]
+Description=DeepSec Telegram bot (session guard and Windows agents hub)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/home/bots/deepsec
+ExecStart=/home/bots/deepsec/.venv/bin/python -m deepsec.server
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+MemoryMax=300M
+
+[Install]
+WantedBy=multi-user.target

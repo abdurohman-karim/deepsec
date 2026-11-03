@@ -24,10 +24,19 @@ def event_xml(event_id: int, **data: str) -> str:
 @pytest.fixture
 def cfg() -> Config:
     return Config(
-        bot_token="123:abc",
-        owner_id=1,
-        totp_secret="JBSWY3DPEHPK3PXP",
+        server_url="ws://127.0.0.1:1/agent",
+        server_fingerprint="",
+        agent_token="secret-token",
+        agent_name="HOME-PC",
         tdata_dirs=(TDATA,),
         decoy_dirs=(DECOY,),
         data_dir=DATA_DIR,
     )
+
+
+@pytest.fixture
+def server_cfg(tmp_path):
+    from deepsec.server.config import ServerConfig
+
+    return ServerConfig(bot_token="123:abc", owner_id=1, totp_secret="JBSWY3DPEHPK3PXP",
+                        agent_token="secret-token", data_dir=str(tmp_path / "server"), api_id=1, api_hash="h")

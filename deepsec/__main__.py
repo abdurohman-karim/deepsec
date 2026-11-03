@@ -40,7 +40,7 @@ def run() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="deepsec", description="Защита сессий Telegram Desktop на Windows")
+    parser = argparse.ArgumentParser(prog="deepsec", description="Windows-агент DeepSec (бот — в deepsec.server)")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("run", help="запустить агента (обычно это делает планировщик от SYSTEM)")
     sub.add_parser("setup", help="установка: аудит, ловушки, бот, автозапуск (от администратора)")
