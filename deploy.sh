@@ -92,8 +92,18 @@ if ss -ltnp "sport = :$PORT" | grep -q LISTEN && ! ss -ltnp "sport = :$PORT" | g
     echo ">>> ⚠️  Порт $PORT занят: $(ss -ltnp "sport = :$PORT" | grep -o 'users:(("[^"]*' | cut -d'"' -f2 | head -1)."
     echo ">>>     Впишите свободный порт в LISTEN_PORT (nano $DIR/.env) и запустите ./deploy.sh ещё раз."
 fi
+# Брандмауэр с политикой DROP без правила для порта — агенты не достучатся (порт сам не открываем:
+# это настройка безопасности сервера, решает владелец)
 if command -v ufw >/dev/null && ufw status | grep -q "Status: active" && ! ufw status | grep -q "^$PORT/tcp"; then
     echo ">>> ⚠️  Брандмауэр ufw включён — откройте порт агентам: ufw allow $PORT/tcp"
+elif iptables -S INPUT 2>/dev/null | grep -q -- "-P INPUT DROP" \
+        && ! iptables -S INPUT | grep -E -- "--dports? " | grep -qw -- "$PORT"; then
+    if [ -x /usr/local/hestia/bin/v-add-firewall-rule ]; then
+        echo ">>> ⚠️  Брандмауэр HestiaCP не пускает агентов на порт $PORT. Откройте его:"
+        echo ">>>     /usr/local/hestia/bin/v-add-firewall-rule ACCEPT 0.0.0.0/0 $PORT TCP DeepSec"
+    else
+        echo ">>> ⚠️  Брандмауэр (iptables, политика DROP) не пускает агентов на порт $PORT — добавьте правило для него."
+    fi
 fi
 
 if ! grep -q '^BOT_TOKEN=.' .env || ! grep -q '^OWNER_ID=.' .env; then

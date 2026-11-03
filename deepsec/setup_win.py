@@ -136,6 +136,14 @@ def server_settings(existing: dict[str, str], opts: SetupOptions) -> dict[str, s
         env["AGENT_NAME"] = opts.name.strip()
     merged = {**existing, **env}
 
+    # Повторная настройка из меню «Пуск»: показываем, куда агент подключается, — иначе неверный адрес
+    # или порт из первой установки остался бы навсегда.
+    if not env and not opts.yes and merged.get("SERVER_URL"):
+        print(f"\nСейчас агент подключается к {merged['SERVER_URL']}")
+        if not _ask("Оставить этот сервер?", True, opts):
+            for key in ("SERVER_URL", "SERVER_FINGERPRINT", "AGENT_TOKEN"):
+                merged.pop(key, None)
+
     missing = [k for k in ("SERVER_URL", "SERVER_FINGERPRINT", "AGENT_TOKEN") if not merged.get(k)]
     if missing and opts.yes:
         raise SetupError("не заданы данные сервера: " + ", ".join(missing) + ". Их печатает ./deploy.sh на сервере")

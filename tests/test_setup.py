@@ -10,9 +10,9 @@ from deepsec.setup_win import SetupError, SetupOptions, launch_target, server_se
 
 
 def test_installer_flags_build_connection():
-    env = server_settings({}, SetupOptions(server=" IP_СЕРВЕРА ", port="8444",
+    env = server_settings({}, SetupOptions(server=" 203.0.113.10 ", port="8444",
                                            fingerprint="AB:CD:EF", token=" tok ", yes=True))
-    assert env["SERVER_URL"] == "wss://IP_СЕРВЕРА:8444/agent"
+    assert env["SERVER_URL"] == "wss://203.0.113.10:8444/agent"
     assert env["SERVER_FINGERPRINT"] == "abcdef" and env["AGENT_TOKEN"] == "tok"
     assert env["AGENT_NAME"]  # по умолчанию — имя компьютера
 
@@ -47,3 +47,18 @@ def test_pause_shows_error_instead_of_crashing(monkeypatch, capsys):
     monkeypatch.setattr("builtins.input", lambda prompt="": "")
     assert main(["setup", "--yes", "--pause"]) == 1
     assert "⛔ Ошибка: tdata не найдена" in capsys.readouterr().out
+
+
+def test_interactive_rerun_can_change_server(monkeypatch):
+    old = {"SERVER_URL": "wss://1.2.3.4:8443/agent", "SERVER_FINGERPRINT": "aa", "AGENT_TOKEN": "t"}
+    answers = iter(["n", "1.2.3.4", "8444", "AB:CD", "tok2"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    env = server_settings(old, SetupOptions())
+    assert env["SERVER_URL"] == "wss://1.2.3.4:8444/agent"
+    assert env["SERVER_FINGERPRINT"] == "abcd" and env["AGENT_TOKEN"] == "tok2"
+
+
+def test_interactive_rerun_keeps_server_by_default(monkeypatch):
+    old = {"SERVER_URL": "wss://1.2.3.4:8444/agent", "SERVER_FINGERPRINT": "aa", "AGENT_TOKEN": "t"}
+    monkeypatch.setattr("builtins.input", lambda prompt="": "")
+    assert server_settings(old, SetupOptions())["SERVER_URL"] == "wss://1.2.3.4:8444/agent"
