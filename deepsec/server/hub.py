@@ -18,6 +18,8 @@ from ..protocol import AGENT_PATH, AUTH_HEADER, HEARTBEAT, NAME_HEADER
 log = logging.getLogger(__name__)
 
 COMMAND_TIMEOUT = 40  # сек: самопроверка на агенте идёт до 15 с
+UNKNOWN_COMMAND = "неизвестная команда"  # так отвечает агент, которому команда не по версии
+OLD_AGENT = "На компьютере старый агент — он этого не умеет. Поставьте новую версию установщика поверх."
 
 
 @dataclass

@@ -19,6 +19,7 @@ from .incidents import Incident, Kind, Severity
 from .link import Link
 from .monitors.eventlog import SecurityLogSubscription
 from .monitors.processes import RemoteToolWatcher
+from .protocol import PET_MAX_TEXT, PET_MOODS
 from .state import AgentState, Journal, Outbox
 from .trust import TrustChecker, sha256_file
 from .winevent import parse_event_xml
@@ -47,6 +48,7 @@ class Agent:
         self._events: asyncio.Queue[str] = asyncio.Queue(maxsize=10_000)
         self._recent: dict[tuple, tuple[Incident, float]] = {}
         self._tasks: set[asyncio.Task] = set()
+        self._pet: tuple[int, str] | None = None  # (PID, настроение) питомца на экране
 
     # ---------- запуск ----------
 
@@ -85,6 +87,7 @@ class Agent:
             "tdata": len(self.cfg.tdata_dirs),
             "decoys": len(self.cfg.decoy_dirs),
             "started": self.started.isoformat(),
+            "pet": self.pet_mood(),
         }
 
     # ---------- обработка событий ----------
@@ -218,6 +221,10 @@ class Agent:
                 return self._result(await self.act_unisolate())
             case "screenshot" | "apps":
                 return await self.look_at_desktop(action)
+            case "pet":
+                return self._result(await self.act_pet(str(args.get("mood") or ""), str(args.get("text") or "")))
+            case "pet_off":
+                return self._result(await self.act_pet_off())
         return False, f"неизвестная команда {action}", None
 
     async def look_at_desktop(self, what: str) -> tuple[bool, str, Any]:
@@ -297,6 +304,32 @@ class Agent:
             self.state.save()
             return "сеть восстановлена"
         return await self._safe("🌐 Изоляция", do())
+
+    async def act_pet(self, mood: str, text: str) -> str:
+        async def do() -> str:
+            if mood not in PET_MOODS:
+                raise ValueError(f"нет настроения «{mood}»")
+            await asyncio.to_thread(desktop.stop_helpers, "pet")  # питомец на экране всегда один
+            text_args = ["--text", " ".join(text.split())[:PET_MAX_TEXT]] if text.strip() else []
+            pid = await asyncio.to_thread(desktop.start_in_user_session, "pet", mood, *text_args)
+            self._pet = (pid, mood)
+            self.link.push_status()
+            return "на экране"
+        return await self._safe("👁 Глаз", do())
+
+    async def act_pet_off(self) -> str:
+        async def do() -> str:
+            count = await asyncio.to_thread(desktop.stop_helpers, "pet")
+            self._pet = None
+            self.link.push_status()
+            return "убран" if count else "его и так не было на экране"
+        return await self._safe("👁 Глаз", do())
+
+    def pet_mood(self) -> str:
+        """Настроение питомца на экране или пустая строка (его убрали, вышел срок, пользователь вышел)."""
+        if self._pet is None or not psutil.pid_exists(self._pet[0]):
+            return ""
+        return self._pet[1]
 
     async def trust_process(self, path: str) -> str:
         async def do() -> str:

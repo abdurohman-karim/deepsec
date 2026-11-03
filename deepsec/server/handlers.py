@@ -10,6 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
+from ..protocol import PET_MAX_TEXT
 from . import keyboards as kb
 from . import screens, texts, ui
 from .keyboards import AlertBtn, Btn
@@ -23,6 +24,7 @@ CODE_ACTIONS = frozenset(texts.CODE_LABELS)
 
 class Form(StatesGroup):
     code = State()
+    pet_text = State()
 
 
 def _plain(notice: str) -> str:
@@ -68,6 +70,18 @@ def build_router(owner_id: int) -> Router:
         text, markup = await screens.build(server, screen, screen_target, notice)
         await ui.show(bot, server, text, markup)
 
+    @router.message(StateFilter(Form.pet_text))
+    async def on_pet_text(message: Message, bot: Bot, server: Server, state: FSMContext) -> None:
+        await ui.delete_incoming(message)
+        target = (await state.get_data()).get("t", "")
+        text = " ".join((message.text or "").split())[:PET_MAX_TEXT]
+        if not text:
+            await ui.show(bot, server, *screens.pet_prompt())
+            return
+        await state.clear()
+        notice = await server.perform("pet_say", target, text)
+        await ui.show(bot, server, *await screens.build(server, "pet", target, notice))
+
     @router.message()
     async def on_other(message: Message) -> None:
         await ui.delete_incoming(message)  # в чате остаётся только меню и уведомления
@@ -93,6 +107,10 @@ def build_router(owner_id: int) -> Router:
             text, markup = await screens.build(server, action, target)
             await ui.show(bot, server, text, markup, message_id)
             return
+        elif action == "pet_text":
+            await state.set_state(Form.pet_text)
+            await state.update_data(a=action, t=target)
+            text, markup = screens.pet_prompt()
         elif action in CODE_ACTIONS:
             await state.set_state(Form.code)
             await state.update_data(a=action, t=target, r=extra)

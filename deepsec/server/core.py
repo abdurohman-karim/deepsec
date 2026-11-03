@@ -14,7 +14,7 @@ from ..state import Journal, PersistentState
 from ..totp import TotpGuard, TotpResult
 from .config import ServerConfig
 from .guard import GuardError, GuardRevoked, GuardTooFresh, SessionGuard, SessionInfo
-from .hub import AgentLink, CommandResult, Hub
+from .hub import OLD_AGENT, UNKNOWN_COMMAND, AgentLink, CommandResult, Hub
 
 log = logging.getLogger(__name__)
 
@@ -314,6 +314,7 @@ class Server:
 AGENT_ACTIONS = {
     "lock": "lock", "isolate": "isolate", "unisolate": "unisolate", "arm": "arm", "disarm": "disarm",
     "selftest": "selftest", "unblock": "unblock", "unblock_all": "unblock",
+    "pet_on": "pet", "pet_say": "pet", "pet_off": "pet_off",
 }
 INCIDENT_ACTIONS = ("kill", "block", "quarantine", "trust")
 
@@ -323,8 +324,14 @@ def _agent_args(action: str, extra: str) -> dict:
         return {"rule": extra}
     if action == "unblock_all":
         return {"rule": "*"}
+    if action == "pet_on":
+        return {"mood": extra}
+    if action == "pet_say":  # свой текст — со следящим питомцем
+        return {"mood": "watch", "text": extra}
     return {}
 
 
 def _fmt(result: CommandResult) -> str:
+    if result.text.startswith(UNKNOWN_COMMAND):
+        return f"⚠️ {OLD_AGENT}"
     return f"{'✅' if result.ok else '⚠️'} {result.text}"

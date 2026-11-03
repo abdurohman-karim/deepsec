@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from ..incidents import Incident, Kind, Severity
+from ..protocol import PET_MAX_TEXT, PET_MOODS, PET_TEXTS
+from .hub import OLD_AGENT, UNKNOWN_COMMAND
 
 if TYPE_CHECKING:
     from .core import Server
@@ -25,6 +27,7 @@ SESSION_THEFT_HINT = (
 AUTO_TERMINATION_HINT = (
     "\n\nСеансы аккаунта завершаются автоматически (кроме доверенных) — итог придёт отдельным сообщением."
 )
+PET_LABELS = {"watch": "👀 Следит", "happy": "😏 Ухмыляется", "angry": "😠 Злится", "sleep": "😴 Дремлет"}
 CODE_LABELS = {
     "disarm": "выключить авто-реакцию",
     "unisolate": "вернуть компьютеру сеть",
@@ -163,6 +166,8 @@ def pc(agent: AgentLink | None, notice: str = "") -> str:
             f"Защищаемые tdata: {st.get('tdata', 0)} · ловушки: {st.get('decoys', 0)}",
             f"Блокировок: {len(st.get('blocked') or {})} · доверенных программ: {st.get('trusted_exes', 0)}",
         ]
+        if st.get("pet") in PET_LABELS:
+            lines.append(f"👁 Глаз на экране: {PET_LABELS[st['pet']]}")
     return _with_notice("\n".join(lines), notice)
 
 
@@ -199,8 +204,8 @@ def screenshot_caption(name: str, data: dict | None) -> str:
 
 def desktop_failure(result: CommandResult) -> str:
     """Почему не вышло — простым текстом (уходит в notice, который экранируется)."""
-    if result.text.startswith("неизвестная команда"):
-        return "⚠️ На компьютере старый агент — он этого не умеет. Поставьте новую версию установщика поверх."
+    if result.text.startswith(UNKNOWN_COMMAND):
+        return f"⚠️ {OLD_AGENT}"
     data = result.data or {}
     parts = [f"⚠️ {result.text or 'нет ответа'}"]
     if data.get("user"):
@@ -233,6 +238,23 @@ def _fit(text: str) -> str:
     if len(text) <= MAX_MESSAGE:
         return text
     return text[:MAX_MESSAGE].rsplit("\n", 1)[0] + "\n…"
+
+
+def pet(agent: AgentLink | None, notice: str = "") -> str:
+    if agent is None or not agent.online:
+        return _with_notice("👁 Компьютер не на связи — глаз не показать.", notice)
+    current = agent.status.get("pet") or ""
+    state = f"сейчас: {PET_LABELS[current]}" if current in PET_LABELS else "сейчас его нет на экране"
+    lines = [f"👁 <b>Глаз на экране {escape(agent.name)}</b> — {state}", "",
+             "Пиксельный «Большой глаз» в правом нижнем углу, поверх игр в окне: медленно водит взглядом "
+             "за курсором. Клики проходят сквозь него, фокус он не забирает. Сам исчезнет через 2 часа.", ""]
+    lines += [f"{PET_LABELS[m]} — «{escape(PET_TEXTS[m], quote=False)}»" for m in PET_MOODS]
+    return _with_notice("\n".join(lines), notice)
+
+
+def pet_prompt() -> str:
+    return (f"✏️ Напишите надпись для глаза (до {PET_MAX_TEXT} символов). Он будет следить за курсором "
+            "и показывать ваш текст.")
 
 
 def incidents(items: list[Incident], notice: str = "") -> str:
@@ -294,7 +316,8 @@ HELP = """❓ <b>Как это работает</b>
 Сервер с этим ботом держит <b>сторожа</b> — отдельный сеанс вашего аккаунта. При краже он сам завершает \
 все сеансы, кроме доверенных ⭐, даже если вы офлайн, и на сутки включает <b>блокаду</b> новых входов.
 
-📸 / 📋 в меню компьютера — снимок экрана и список открытых программ того, кто сейчас за ним работает.
+📸 / 📋 в меню компьютера — снимок экрана и список открытых программ того, кто сейчас за ним работает. \
+👁 — пиксельный «Большой глаз» в углу экрана, который присматривает за друзьями.
 
 🔑 — действия, которые ослабляют защиту. Для них нужен код из приложения-аутентификатора: \
 если украдут ваш Telegram, вор не сможет выключить защиту.

@@ -17,8 +17,18 @@ HEARTBEAT = 30  # сек: ping WebSocket и отправка статуса
 # Команды, которые сервер может отдать агенту.
 ACTIONS = frozenset({
     "status", "selftest", "arm", "disarm", "lock", "isolate", "unisolate",
-    "kill", "block", "unblock", "quarantine", "trust", "screenshot", "apps",
+    "kill", "block", "unblock", "quarantine", "trust", "screenshot", "apps", "pet", "pet_off",
 })
+# Настроения пиксельного питомца на экране компьютера.
+PET_MOODS = ("watch", "happy", "angry", "sleep")
+PET_MAX_TEXT = 60
+# Надписи по умолчанию (бот показывает их владельцу, агент — на экране).
+PET_TEXTS = {
+    "watch": "Katta og'a seni kuzatyabdi",
+    "happy": "Zo'r o'ynayapsan!",
+    "angry": "Ko'p o'ynama!",
+    "sleep": "Katta og'a dam olyapti... zzz",
+}
 
 
 def normalize_fingerprint(value: str) -> str:

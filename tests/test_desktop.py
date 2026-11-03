@@ -45,7 +45,7 @@ def test_background_skips_windows_processes_and_windowed_apps():
 
 
 def test_helper_command_from_sources():
-    cmd, _ = desktop.helper_command("apps")
+    cmd, _ = desktop.helper_command("desktop", "apps")
     assert cmd[-4:] == ["-m", "deepsec", "desktop", "apps"] and not cmd[0].lower().endswith("pythonw.exe")
 
 

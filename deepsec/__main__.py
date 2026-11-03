@@ -10,6 +10,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from .config import Config
+from .protocol import PET_MOODS
 
 log = logging.getLogger("deepsec")
 
@@ -56,6 +57,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("version", help="версия; заодно проверяет, что сборка цела")
     desktop_cmd = sub.add_parser("desktop", help="служебная: агент запускает её в сеансе пользователя")
     desktop_cmd.add_argument("what", choices=("screenshot", "apps"))
+    pet_cmd = sub.add_parser("pet", help="пиксельный питомец в углу экрана (агент запускает его по команде из бота)")
+    pet_cmd.add_argument("mood", choices=PET_MOODS)
+    pet_cmd.add_argument("--text", default="", help="своя надпись вместо стандартной")
+    pet_cmd.add_argument("--minutes", type=float, default=120, help="через сколько минут исчезнуть")
     for cmd in sub.choices.values():
         cmd.add_argument("--pause", action="store_true", help="ждать Enter перед выходом (окно не закроется)")
     args = parser.parse_args(argv)
@@ -81,13 +86,18 @@ def _dispatch(args: argparse.Namespace) -> int:
         from . import desktop
 
         return desktop.helper_main(args.what)
+    if args.command == "pet":
+        from . import pet
+
+        return pet.main(args.mood, args.text, args.minutes)
     if args.command == "version":
         from . import __version__
 
         # Импорт проверяет, что в сборке PyInstaller есть всё нужное агенту (CI запускает это после сборки).
         windows_only = ("win32evtlog", "win32ts", "win32profile", "win32pipe", "win32file", "win32event",
                         "win32service", "win32gui", "win32process", "PIL.ImageGrab")
-        for module in ("deepsec.agent", "deepsec.setup_win", *(windows_only if sys.platform == "win32" else ())):
+        for module in ("deepsec.agent", "deepsec.setup_win", "deepsec.pet",
+                       *(windows_only if sys.platform == "win32" else ())):
             importlib.import_module(module)
         print(__version__)
         return 0

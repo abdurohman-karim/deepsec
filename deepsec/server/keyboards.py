@@ -8,7 +8,8 @@ from aiogram.filters.callback_data import CallbackData
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from ..incidents import Incident, Kind, Severity
-from .texts import ICONS, local
+from ..protocol import PET_MOODS
+from .texts import ICONS, PET_LABELS, local
 
 if TYPE_CHECKING:
     from .core import Server
@@ -68,6 +69,7 @@ def pc(agent: AgentLink | None) -> InlineKeyboardMarkup:
     rows = []
     if agent.online:
         rows.append([_b("📸 Скриншот", "shot", name), _b("📋 Что запущено", "apps", name)])
+        rows.append([_b("👁 Глаз на экране", "pet", name)])
         rows.append([_b("🔒 Заблокировать экран", "lock", name)])
         rows.append([_b(f"🌐 Вернуть сеть {LOCK}", "unisolate", name)] if st.get("isolated")
                     else [_b("🌐 Отрезать от сети", "confirm_isolate", name)])
@@ -81,6 +83,19 @@ def pc(agent: AgentLink | None) -> InlineKeyboardMarkup:
 
 def apps(name: str) -> InlineKeyboardMarkup:
     return _markup([_b("📸 Скриншот", "shot", name), _b("🔄 Обновить", "apps", name)], _back("pc", name))
+
+
+def pet(agent: AgentLink | None) -> InlineKeyboardMarkup:
+    if agent is None or not agent.online:
+        return _markup(_back("pc", agent.name if agent else ""))
+    name, current = agent.name, agent.status.get("pet") or ""
+    moods = [_b(f"{'✅ ' if mood == current else ''}{PET_LABELS[mood]}", "pet_on", name, mood) for mood in PET_MOODS]
+    rows = [moods[i:i + 2] for i in range(0, len(moods), 2)]
+    rows.append([_b("✏️ Свой текст", "pet_text", name)])
+    if current:
+        rows.append([_b("🙈 Убрать с экрана", "pet_off", name)])
+    rows.append([_b("🔄 Обновить", "pet", name), *_back("pc", name)])
+    return _markup(*rows)
 
 
 def blocks(agent: AgentLink | None) -> InlineKeyboardMarkup:

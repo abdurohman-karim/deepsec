@@ -39,24 +39,30 @@ class DesktopError(RuntimeError):
 
 # ---------- агент (SYSTEM): запуск помощника в сеансе пользователя ----------
 
-def helper_command(what: str) -> tuple[list[str], str]:
+def helper_command(*args: str) -> tuple[list[str], str]:
     """(команда, рабочая папка) помощника — из установщика или из исходников."""
     if getattr(sys, "frozen", False):  # собрано PyInstaller
-        return [sys.executable, "desktop", what], str(Path(sys.executable).parent)
+        return [sys.executable, *args], str(Path(sys.executable).parent)
     python = Path(sys.executable)
     if python.name.lower() == "pythonw.exe":
         python = python.with_name("python.exe")  # у pythonw нет stdout — не получим ответ
-    return [str(python), "-m", "deepsec", "desktop", what], str(PROJECT_DIR)
+    return [str(python), "-m", "deepsec", *args], str(PROJECT_DIR)
+
+
+def helper_args(cmdline: list[str]) -> list[str]:
+    """Аргументы помощника из командной строки процесса: всё после DeepSecAgent.exe или «-m deepsec»."""
+    for i, part in enumerate(cmdline):
+        if i == 0 and part.lower().endswith("deepsecagent.exe"):
+            return cmdline[1:]
+        if part == "deepsec" and i and cmdline[i - 1] == "-m":
+            return cmdline[i + 1:]
+    return []
 
 
 def run_in_user_session(what: str, timeout: float = HELPER_TIMEOUT) -> dict[str, Any]:
-    import win32ts
-
-    session = _active_session()
-    if session is None:
-        raise DesktopError("за компьютером никто не работает: открыт экран входа или пользователь отключён")
-    cmd, cwd = helper_command(what)
-    if win32ts.ProcessIdToSessionId(os.getpid()) == session:
+    session = _require_session()
+    cmd, cwd = helper_command("desktop", what)
+    if _same_session(session):
         # Агент запущен не от SYSTEM, а в том же сеансе (отладка из исходников) — токен не нужен.
         try:
             done = subprocess.run(cmd, cwd=cwd, capture_output=True, timeout=timeout, creationflags=NO_WINDOW)
@@ -64,6 +70,41 @@ def run_in_user_session(what: str, timeout: float = HELPER_TIMEOUT) -> dict[str,
             raise DesktopError("помощник не ответил вовремя") from None
         return parse_output(done.stdout)
     return parse_output(_run_as_user(session, cmd, cwd, timeout))
+
+
+def start_in_user_session(*args: str) -> int:
+    """Запускает помощника в сеансе пользователя и не ждёт его (питомец живёт, пока его не уберут). Возвращает PID."""
+    session = _require_session()
+    cmd, cwd = helper_command(*args)
+    if _same_session(session):
+        return subprocess.Popen(cmd, cwd=cwd, creationflags=NO_WINDOW).pid
+    process, pid = _create_as_user(session, cmd, cwd)
+    process.Close()
+    return pid
+
+
+def stop_helpers(command: str) -> int:
+    """Завершает запущенных помощников этой команды (например, всех питомцев). Возвращает, сколько было."""
+    found = [p for p in psutil.process_iter(["cmdline"]) if helper_args(p.info["cmdline"] or [])[:1] == [command]]
+    for p in found:
+        try:
+            p.kill()
+        except psutil.Error:
+            pass
+    return len(found)
+
+
+def _require_session() -> int:
+    session = _active_session()
+    if session is None:
+        raise DesktopError("за компьютером никто не работает: открыт экран входа или пользователь отключён")
+    return session
+
+
+def _same_session(session: int) -> bool:
+    import win32ts
+
+    return win32ts.ProcessIdToSessionId(os.getpid()) == session
 
 
 def _active_session() -> int | None:
@@ -78,13 +119,9 @@ def _active_session() -> int | None:
     return active[0] if active else None
 
 
-def _run_as_user(session: int, cmd: list[str], cwd: str, timeout: float) -> bytes:
+def _create_as_user(session: int, cmd: list[str], cwd: str, stdout: Any = None) -> tuple[Any, int]:
+    """Процесс с правами пользователя сеанса, на его рабочем столе. Возвращает (дескриптор, PID)."""
     import pywintypes
-    import win32api
-    import win32con
-    import win32event
-    import win32file
-    import win32pipe
     import win32process
     import win32profile
     import win32ts
@@ -93,26 +130,44 @@ def _run_as_user(session: int, cmd: list[str], cwd: str, timeout: float) -> byte
         token = win32ts.WTSQueryUserToken(session)
     except pywintypes.error as e:
         raise DesktopError(f"нет доступа к сеансу пользователя ({e.strerror}) — агент должен работать от SYSTEM") from e
+    startup = win32process.STARTUPINFO()
+    startup.lpDesktop = "winsta0\\default"
+    if stdout is not None:
+        startup.dwFlags = win32process.STARTF_USESTDHANDLES
+        startup.hStdOutput = stdout
+    try:
+        env = win32profile.CreateEnvironmentBlock(token, False)
+        process, thread, pid, _ = win32process.CreateProcessAsUser(
+            token, None, subprocess.list2cmdline(cmd), None, None, stdout is not None,
+            win32process.CREATE_NO_WINDOW | win32process.CREATE_UNICODE_ENVIRONMENT, env, cwd, startup)
+    except pywintypes.error as e:
+        raise DesktopError(f"не удалось запустить помощника: {e.strerror}") from e
+    finally:
+        token.Close()
+    thread.Close()
+    return process, pid
+
+
+def _run_as_user(session: int, cmd: list[str], cwd: str, timeout: float) -> bytes:
+    import pywintypes
+    import win32api
+    import win32con
+    import win32event
+    import win32file
+    import win32pipe
+    import win32process
+
     attrs = pywintypes.SECURITY_ATTRIBUTES()
     attrs.bInheritHandle = True
     read, write = win32pipe.CreatePipe(attrs, 0)
     win32api.SetHandleInformation(read, win32con.HANDLE_FLAG_INHERIT, 0)  # помощнику — только запись
-    startup = win32process.STARTUPINFO()
-    startup.lpDesktop = "winsta0\\default"
-    startup.dwFlags = win32process.STARTF_USESTDHANDLES
-    startup.hStdOutput = write
     try:
-        env = win32profile.CreateEnvironmentBlock(token, False)
-        process, thread, _, _ = win32process.CreateProcessAsUser(
-            token, None, subprocess.list2cmdline(cmd), None, None, True,
-            win32process.CREATE_NO_WINDOW | win32process.CREATE_UNICODE_ENVIRONMENT, env, cwd, startup)
-    except pywintypes.error as e:
+        process, _ = _create_as_user(session, cmd, cwd, stdout=write)
+    except DesktopError:
         read.Close()
-        raise DesktopError(f"не удалось запустить помощника: {e.strerror}") from e
+        raise
     finally:
         write.Close()  # иначе чтение не увидит конца, когда помощник завершится
-        token.Close()
-    thread.Close()
 
     timed_out = threading.Event()
 
