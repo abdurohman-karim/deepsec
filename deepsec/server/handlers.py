@@ -8,7 +8,7 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from . import keyboards as kb
 from . import screens, texts, ui
@@ -83,6 +83,16 @@ def build_router(owner_id: int) -> Router:
             await state.clear()
             screen, screen_target = _after(data.get("a", ""), data.get("t", ""))
             text, markup = await screens.build(server, screen, screen_target)
+        elif action == "shot":
+            await query.answer("📸 Снимаю экран…")
+            await _send_screenshot(bot, server, target, message_id)
+            return
+        elif action in screens.SLOW_SCREENS:
+            await query.answer("⏳")  # компьютер отвечает несколько секунд
+            await state.clear()
+            text, markup = await screens.build(server, action, target)
+            await ui.show(bot, server, text, markup, message_id)
+            return
         elif action in CODE_ACTIONS:
             await state.set_state(Form.code)
             await state.update_data(a=action, t=target, r=extra)
@@ -134,6 +144,25 @@ def build_router(owner_id: int) -> Router:
             server.notifier.send(notice)
 
     return router
+
+
+async def _send_screenshot(bot: Bot, server: Server, name: str, message_id: int | None) -> None:
+    jpeg, result = await server.screenshot(name)
+    if jpeg is None:
+        notice = texts.desktop_failure(result)
+    else:
+        try:
+            await bot.send_photo(server.cfg.owner_id, BufferedInputFile(jpeg, "screen.jpg"),
+                                 caption=texts.screenshot_caption(name, result.data))
+        except TelegramAPIError as e:
+            notice = f"⚠️ Telegram не принял скриншот: {e}"
+        else:
+            # Меню переезжает под снимок — следующий можно сделать одним нажатием.
+            text, markup = await screens.build(server, "pc", name)
+            await ui.send_fresh(bot, server, text, markup)
+            return
+    text, markup = await screens.build(server, "pc", name, notice)
+    await ui.show(bot, server, text, markup, message_id)
 
 
 async def _edit_alert(query: CallbackQuery, inc, markup, text_too: bool = True) -> bool:

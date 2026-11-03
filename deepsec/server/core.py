@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import time
 from collections.abc import Awaitable
@@ -252,6 +253,17 @@ class Server:
                 inc.actions.append(self.terminate_sessions())
             self.publish(inc)
         return result
+
+    # ---------- экран и программы компьютера ----------
+
+    async def screenshot(self, name: str) -> tuple[bytes | None, CommandResult]:
+        """JPEG экрана (None — не получилось) и ответ агента: в нём пользователь, активное окно или ошибка."""
+        result = await self.hub.command(name, "screenshot")
+        jpeg = (result.data or {}).get("jpeg") if result.ok else None
+        return (base64.b64decode(jpeg) if jpeg else None), result
+
+    async def apps(self, name: str) -> CommandResult:
+        return await self.hub.command(name, "apps")
 
     # ---------- действия из меню и кнопок ----------
 

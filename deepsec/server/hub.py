@@ -67,7 +67,8 @@ class Hub:
             return web.Response(status=401)
 
         name = request.headers.get(NAME_HEADER, "").strip()[:40] or "PC"
-        ws = web.WebSocketResponse(heartbeat=HEARTBEAT, max_msg_size=1 << 20)
+        # 16 МБ: скриншот в JPEG обычно 200–500 КБ, но на нескольких 4K-мониторах бывает больше.
+        ws = web.WebSocketResponse(heartbeat=HEARTBEAT, max_msg_size=16 << 20)
         await ws.prepare(request)
         first_time = name not in self.agents
         agent = self.agents.setdefault(name, AgentLink(name))

@@ -54,6 +54,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("check", help="диагностика: где tdata, кем подписан Telegram.exe")
     sub.add_parser("uninstall", help="убрать задачу, правила брандмауэра, ловушки и настройки")
     sub.add_parser("version", help="версия; заодно проверяет, что сборка цела")
+    desktop_cmd = sub.add_parser("desktop", help="служебная: агент запускает её в сеансе пользователя")
+    desktop_cmd.add_argument("what", choices=("screenshot", "apps"))
     for cmd in sub.choices.values():
         cmd.add_argument("--pause", action="store_true", help="ждать Enter перед выходом (окно не закроется)")
     args = parser.parse_args(argv)
@@ -75,11 +77,17 @@ def main(argv: list[str] | None = None) -> int:
 def _dispatch(args: argparse.Namespace) -> int:
     if args.command == "run":
         return run()
+    if args.command == "desktop":
+        from . import desktop
+
+        return desktop.helper_main(args.what)
     if args.command == "version":
         from . import __version__
 
         # Импорт проверяет, что в сборке PyInstaller есть всё нужное агенту (CI запускает это после сборки).
-        for module in ("deepsec.agent", "deepsec.setup_win", *(("win32evtlog",) if sys.platform == "win32" else ())):
+        windows_only = ("win32evtlog", "win32ts", "win32profile", "win32pipe", "win32file", "win32event",
+                        "win32service", "win32gui", "win32process", "PIL.ImageGrab")
+        for module in ("deepsec.agent", "deepsec.setup_win", *(windows_only if sys.platform == "win32" else ())):
             importlib.import_module(module)
         print(__version__)
         return 0

@@ -67,6 +67,7 @@ def pc(agent: AgentLink | None) -> InlineKeyboardMarkup:
     name, st = agent.name, agent.status
     rows = []
     if agent.online:
+        rows.append([_b("📸 Скриншот", "shot", name), _b("📋 Что запущено", "apps", name)])
         rows.append([_b("🔒 Заблокировать экран", "lock", name)])
         rows.append([_b(f"🌐 Вернуть сеть {LOCK}", "unisolate", name)] if st.get("isolated")
                     else [_b("🌐 Отрезать от сети", "confirm_isolate", name)])
@@ -76,6 +77,10 @@ def pc(agent: AgentLink | None) -> InlineKeyboardMarkup:
                      _b("🧪 Самопроверка", "selftest", name)])
     rows.append([_b("🔄 Обновить", "pc", name), *_back()])
     return _markup(*rows)
+
+
+def apps(name: str) -> InlineKeyboardMarkup:
+    return _markup([_b("📸 Скриншот", "shot", name), _b("🔄 Обновить", "apps", name)], _back("pc", name))
 
 
 def blocks(agent: AgentLink | None) -> InlineKeyboardMarkup:

@@ -62,7 +62,7 @@ def test_menu_screens(server_cfg):
     agent.ws = type("WS", (), {"closed": False})()  # «на связи»
     text, markup = asyncio.run(screens.build(server, "pc", "HOME-PC", notice="✅ готово"))
     assert text.startswith("✅ готово") and "авто-реакция" in text
-    assert actions(markup) == ["lock", "confirm_isolate", "disarm", "blocks", "selftest", "pc", "home"]
+    assert actions(markup) == ["shot", "apps", "lock", "confirm_isolate", "disarm", "blocks", "selftest", "pc", "home"]
 
     text, markup = asyncio.run(screens.build(server, "blocks", "HOME-PC"))
     assert "crack.exe" in text and actions(markup) == ["unblock", "pc"]

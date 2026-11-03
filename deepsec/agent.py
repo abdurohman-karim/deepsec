@@ -12,7 +12,7 @@ from typing import Any
 
 import psutil
 
-from . import __version__, response, winacl
+from . import __version__, desktop, response, winacl
 from .config import Config
 from .detector import Detector, norm_path
 from .incidents import Incident, Kind, Severity
@@ -216,7 +216,23 @@ class Agent:
                 return self._result(await self.act_isolate())
             case "unisolate":
                 return self._result(await self.act_unisolate())
+            case "screenshot" | "apps":
+                return await self.look_at_desktop(action)
         return False, f"неизвестная команда {action}", None
+
+    async def look_at_desktop(self, what: str) -> tuple[bool, str, Any]:
+        """Скриншот или список программ — из сеанса того, кто сейчас за компьютером."""
+        log.info("Сервер запросил %s", "скриншот экрана" if what == "screenshot" else "список программ")
+        try:
+            data = await asyncio.to_thread(desktop.run_in_user_session, what)
+        except desktop.DesktopError as e:
+            return False, str(e), None
+        except Exception as e:
+            log.exception("Не удалось заглянуть в сеанс пользователя")
+            return False, f"ошибка — {e}", None
+        if data.get("error"):
+            return False, str(data.pop("error")), data
+        return True, "", data
 
     @staticmethod
     def _result(text: str) -> tuple[bool, str, Any]:

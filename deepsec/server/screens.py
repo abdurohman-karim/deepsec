@@ -23,6 +23,8 @@ AFTER = {
 }
 SCREENS = frozenset({"home", "pc", "blocks", "incidents", "inc", "sessions", "sess", "help",
                      "confirm_isolate", "confirm_terminate"})
+# Экраны, для которых сервер ждёт ответа компьютера (несколько секунд).
+SLOW_SCREENS = frozenset({"apps"})
 
 
 async def build(server: Server, screen: str, target: str = "", notice: str = "") -> Screen:
@@ -32,6 +34,8 @@ async def build(server: Server, screen: str, target: str = "", notice: str = "")
     if screen == "blocks":
         agent = server.hub.agents.get(target)
         return texts.blocks(agent, notice), kb.blocks(agent)
+    if screen == "apps":
+        return texts.apps(target, await server.apps(target), notice), kb.apps(target)
     if screen == "incidents":
         items = server.journal.last(10)
         return texts.incidents(items, notice), kb.incidents(items)

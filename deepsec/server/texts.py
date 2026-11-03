@@ -13,10 +13,11 @@ from ..incidents import Incident, Kind, Severity
 if TYPE_CHECKING:
     from .core import Server
     from .guard import SessionInfo
-    from .hub import AgentLink
+    from .hub import AgentLink, CommandResult
 
 ICONS = {Severity.INFO: "ℹ️", Severity.WARNING: "⚠️", Severity.CRITICAL: "🚨"}
 MAX_FILES_SHOWN = 5
+MAX_MESSAGE = 3800  # с запасом под notice: лимит Telegram — 4096
 SESSION_THEFT_HINT = (
     "\n\n<b>Что сделать сейчас:</b> нажмите «📵 Завершить сеансы» — украденная копия tdata это ваш же сеанс "
     "Desktop, поэтому он тоже завершится. Затем найдите и удалите вирус."
@@ -175,6 +176,63 @@ def blocks(agent: AgentLink | None, notice: str = "") -> str:
     return _with_notice("\n".join(lines), notice)
 
 
+def _desktop_head(name: str, data: dict) -> list[str]:
+    """Кто за компьютером и чем занят — шапка скриншота и списка программ."""
+    user = f" · 👤 {escape(str(data['user']))}" if data.get("user") else ""
+    lines = [f"🖥 <b>{escape(name)}</b>{user}"]
+    idle = float(data.get("idle") or 0)
+    if data.get("locked"):
+        lines.append("🔒 Экран заблокирован")
+    elif "idle" in data:
+        lines.append("🟢 Работают прямо сейчас" if idle < 60 else f"💤 Без действий {_duration(idle)}")
+    active = data.get("active")
+    if active and not data.get("locked"):
+        lines.append(f"Активное окно: {escape(active.get('title', ''))} (<code>{escape(active.get('exe', '?'))}</code>)")
+    return lines
+
+
+def screenshot_caption(name: str, data: dict | None) -> str:
+    lines = _desktop_head(name, data or {})
+    lines.append(f"🕒 {local(time.time()):%d.%m.%Y %H:%M:%S}")
+    return "\n".join(lines)  # заголовок окна агент обрезает до 100 символов — в лимит подписи (1024) влезает
+
+
+def desktop_failure(result: CommandResult) -> str:
+    """Почему не вышло — простым текстом (уходит в notice, который экранируется)."""
+    data = result.data or {}
+    parts = [f"⚠️ {result.text or 'нет ответа'}"]
+    if data.get("user"):
+        parts.append(f"пользователь {data['user']}")
+    if data.get("idle") is not None and not data.get("locked") and float(data["idle"]) >= 60:
+        parts.append(f"без действий {_duration(float(data['idle']))}")
+    return " · ".join(parts)
+
+
+def apps(name: str, result: CommandResult, notice: str = "") -> str:
+    title = f"📋 <b>Что запущено на {escape(name)}</b>"
+    if not result.ok:
+        return _with_notice(f"{title}\n\n{escape(desktop_failure(result))}", notice)
+    data = result.data or {}
+    lines = [title, *_desktop_head(name, data)[1:], ""]
+    windows = data.get("windows") or []
+    lines.append(f"<b>Окна ({len(windows)}):</b>" if windows else "Открытых окон нет.")
+    for w in windows:
+        mark = "▶️" if w.get("active") else ("➖" if w.get("minimized") else "•")
+        lines.append(f"{mark} {escape(w.get('title', ''))} — <code>{escape(w.get('exe', '?'))}</code>")
+    background = data.get("background") or []
+    if background:
+        lines.append("\n<b>В фоне:</b> " + ", ".join(f"<code>{escape(n)}</code>" for n in background))
+    lines.append(f"\n🕒 {local(time.time()):%H:%M:%S} · ▶️ активное окно, ➖ свёрнуто")
+    return _with_notice(_fit("\n".join(lines)), notice)
+
+
+def _fit(text: str) -> str:
+    """Telegram не примет сообщение длиннее 4096 символов — режем по строкам."""
+    if len(text) <= MAX_MESSAGE:
+        return text
+    return text[:MAX_MESSAGE].rsplit("\n", 1)[0] + "\n…"
+
+
 def incidents(items: list[Incident], notice: str = "") -> str:
     text = "📋 <b>Последние инциденты</b>" if items else "📋 Инцидентов пока не было ✨"
     return _with_notice(text, notice)
@@ -233,6 +291,8 @@ HELP = """❓ <b>Как это работает</b>
 
 Сервер с этим ботом держит <b>сторожа</b> — отдельный сеанс вашего аккаунта. При краже он сам завершает \
 все сеансы, кроме доверенных ⭐, даже если вы офлайн, и на сутки включает <b>блокаду</b> новых входов.
+
+📸 / 📋 в меню компьютера — снимок экрана и список открытых программ того, кто сейчас за ним работает.
 
 🔑 — действия, которые ослабляют защиту. Для них нужен код из приложения-аутентификатора: \
 если украдут ваш Telegram, вор не сможет выключить защиту.
