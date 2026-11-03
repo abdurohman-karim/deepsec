@@ -1,11 +1,12 @@
-"""Сторож аккаунта: отдельный сеанс Telegram (Telethon), которым агент сам завершает украденные сеансы.
+"""Сторож аккаунта: отдельный сеанс Telegram (Telethon) на сервере, которым сервер сам завершает
+украденные сеансы.
 
 Украденная копия tdata — это тот же сеанс, что и Telegram Desktop на ПК. Завершив его с другого сеанса,
-мы делаем копию бесполезной, даже если стилер успел её отправить. Сеанс сторожа хранится в папке данных
-агента, доступной только SYSTEM и администраторам.
+мы делаем копию бесполезной, даже если стилер успел её отправить.
 """
 from __future__ import annotations
 
+import getpass
 import logging
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass
@@ -13,7 +14,17 @@ from datetime import datetime
 from pathlib import Path
 
 from telethon import TelegramClient, events, functions, types
-from telethon.errors import FreshResetAuthorisationForbiddenError, RPCError, UnauthorizedError
+from telethon.errors import (
+    FloodWaitError,
+    FreshResetAuthorisationForbiddenError,
+    PasswordHashInvalidError,
+    PhoneCodeExpiredError,
+    PhoneCodeInvalidError,
+    PhoneNumberInvalidError,
+    RPCError,
+    SessionPasswordNeededError,
+    UnauthorizedError,
+)
 
 from .. import __version__
 
@@ -120,10 +131,122 @@ class SessionGuard:
         return victims
 
 
-async def interactive_login(session_path: Path, api_id: int, api_hash: str) -> str:
-    """Вход сторожа из консоли: номер, код из Telegram, облачный пароль. Возвращает имя аккаунта."""
-    client = make_client(session_path, api_id, api_hash)
-    await client.start(phone=lambda: input("Номер телефона аккаунта (+7…): ").strip())
-    me = await client.get_me()
-    await client.disconnect()
+def normalize_phone(raw: str) -> str:
+    """'+998 (90) 123-45-67' -> '+998901234567'."""
+    digits = "".join(c for c in raw if c.isdigit())
+    return f"+{digits}" if digits else ""
+
+
+def describe_sent_code(code_type) -> str:
+    """Куда Telegram отправил код входа — без этого непонятно, где его искать."""
+    t = types.auth
+    if isinstance(code_type, t.SentCodeTypeApp):
+        return ("в приложение Telegram: чат «Telegram» с синей галочкой на телефоне или в Telegram Desktop "
+                "(не SMS)")
+    if isinstance(code_type, (t.SentCodeTypeSms, t.SentCodeTypeFirebaseSms, t.SentCodeTypeSmsWord,
+                              t.SentCodeTypeSmsPhrase)):
+        return "по SMS"
+    if isinstance(code_type, t.SentCodeTypeCall):
+        return "звонком — робот продиктует код"
+    if isinstance(code_type, t.SentCodeTypeFlashCall):
+        return "сброшенным звонком — код это номер, с которого звонили"
+    if isinstance(code_type, t.SentCodeTypeMissedCall):
+        return f"пропущенным звонком — код это последние {code_type.length} цифр номера, с которого звонили"
+    if isinstance(code_type, t.SentCodeTypeEmailCode):
+        return f"на почту для входа {code_type.email_pattern}"
+    if isinstance(code_type, t.SentCodeTypeFragmentSms):
+        return f"через Fragment — номер куплен на fragment.com: {code_type.url}"
+    return f"неизвестным способом ({type(code_type).__name__})"
+
+
+def describe_next(next_type) -> str:
+    t = types.auth
+    if isinstance(next_type, t.CodeTypeSms):
+        return "по SMS"
+    if isinstance(next_type, (t.CodeTypeCall, t.CodeTypeFlashCall, t.CodeTypeMissedCall)):
+        return "звонком"
+    if isinstance(next_type, t.CodeTypeFragmentSms):
+        return "через Fragment"
+    return "другим способом"
+
+
+async def interactive_login(
+    session_path: Path,
+    api_id: int,
+    api_hash: str,
+    ask: Callable[[str], str] = input,
+    say: Callable[[str], None] = print,
+    ask_secret: Callable[[str], str] = getpass.getpass,
+    client=None,
+) -> str:
+    """Вход сторожа из консоли: номер, код, облачный пароль. Говорит, куда Telegram отправил код,
+    и по пустому Enter просит отправить его другим способом. Возвращает имя аккаунта."""
+    client = client or make_client(session_path, api_id, api_hash)
+    await client.connect()
+    try:
+        if not await client.is_user_authorized():
+            await _sign_in(client, ask, say, ask_secret)
+        me = await client.get_me()
+    finally:
+        await client.disconnect()
     return f"{me.first_name or ''} {me.last_name or ''}".strip() or str(me.id)
+
+
+async def _sign_in(client, ask, say, ask_secret) -> None:
+    while True:
+        phone = normalize_phone(ask("Номер телефона в международном формате (например +998901234567): "))
+        if not phone:
+            continue
+        say(f"Запрашиваю код для {phone}…")
+        try:
+            sent = await client(functions.auth.SendCodeRequest(phone, client.api_id, client.api_hash,
+                                                               types.CodeSettings()))
+            break
+        except PhoneNumberInvalidError:
+            say("⚠️  Telegram не знает такой номер — проверьте код страны и цифры.")
+        except FloodWaitError as e:
+            raise GuardError(f"Слишком много попыток входа — Telegram просит подождать {e.seconds // 60 + 1} мин.") from e
+
+    if isinstance(sent, types.auth.SentCodePaymentRequired):
+        raise GuardError("Telegram требует оплату за код входа для этого номера — войти через API сейчас нельзя.")
+    if isinstance(sent.type, types.auth.SentCodeTypeSetUpEmailRequired):
+        raise GuardError("Telegram требует сначала привязать почту для входа: на телефоне Настройки → "
+                         "Конфиденциальность → Почта для входа. Потом повторите вход.")
+
+    while True:
+        say(f"📨 Код отправлен {describe_sent_code(sent.type)}.")
+        if sent.next_type:
+            say(f"   Не пришёл? Нажмите Enter без кода — Telegram отправит его {describe_next(sent.next_type)}"
+                + (f" (можно через {sent.timeout} с)." if sent.timeout else "."))
+        code = "".join(c for c in ask("Код: ") if c.isalnum())
+        if not code:
+            if not sent.next_type:
+                say("   Другого способа Telegram не предлагает — подождите пару минут и проверьте ещё раз.")
+                continue
+            try:
+                sent = await client(functions.auth.ResendCodeRequest(phone, sent.phone_code_hash))
+            except PhoneCodeExpiredError:
+                say("   Код истёк — запрашиваю новый.")
+                sent = await client(functions.auth.SendCodeRequest(phone, client.api_id, client.api_hash,
+                                                                   types.CodeSettings()))
+            except FloodWaitError as e:
+                say(f"   Telegram просит подождать {e.seconds} с перед повторной отправкой.")
+            continue
+        try:
+            await client.sign_in(phone, code, phone_code_hash=sent.phone_code_hash)
+            return
+        except PhoneCodeInvalidError:
+            say("⚠️  Неверный код, попробуйте ещё раз.")
+        except PhoneCodeExpiredError:
+            say("⚠️  Код истёк — запрашиваю новый.")
+            sent = await client(functions.auth.SendCodeRequest(phone, client.api_id, client.api_hash,
+                                                               types.CodeSettings()))
+        except SessionPasswordNeededError:
+            break
+
+    while True:
+        try:
+            await client.sign_in(password=ask_secret("Облачный пароль (2FA, символы не отображаются): "))
+            return
+        except PasswordHashInvalidError:
+            say("⚠️  Неверный облачный пароль.")

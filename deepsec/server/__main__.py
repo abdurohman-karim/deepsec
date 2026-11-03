@@ -16,7 +16,7 @@ from aiohttp import web
 
 from .config import ServerConfig
 from .core import Server
-from .guard import SessionGuard, interactive_login, make_client
+from .guard import GuardError, SessionGuard, interactive_login, make_client
 from .handlers import build_router
 from .texts import set_timezone
 from .ui import TelegramNotifier
@@ -57,8 +57,14 @@ def login(cfg: ServerConfig) -> int:
     if not cfg.api_id:
         print("В .env нет TG_API_ID / TG_API_HASH — получите их на https://my.telegram.org → API development tools.")
         return 1
-    print("Вход сторожа. Код придёт в Telegram, затем может понадобиться облачный пароль.")
-    name = asyncio.run(interactive_login(Path(cfg.data_dir) / "guard", cfg.api_id, cfg.api_hash))
+    print("Вход сторожа: номер телефона, код, затем, если включён, облачный пароль.")
+    try:
+        name = asyncio.run(interactive_login(Path(cfg.data_dir) / "guard", cfg.api_id, cfg.api_hash))
+    except GuardError as e:
+        print(f"⛔ {e}")
+        return 1
+    except KeyboardInterrupt:
+        return 1
     print(f"✅ Сторож вошёл в аккаунт {name}. В списке устройств он называется «DeepSec Guard» — не завершайте его.")
     print("⚠️  Telegram разрешает завершать другие сеансы только сеансу старше 24 часов.")
     return 0
@@ -69,6 +75,7 @@ def main() -> int:
     cfg = ServerConfig.load()
     Path(cfg.data_dir).mkdir(parents=True, exist_ok=True)
     if sys.argv[1:] == ["login"]:
+        logging.getLogger("telethon").setLevel(logging.WARNING)  # без служебных строк при вводе кода
         return login(cfg)
     asyncio.run(serve(cfg))
     return 0

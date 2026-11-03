@@ -13,13 +13,6 @@ SSH_OPTS="-o ControlMaster=auto -o ControlPath=/tmp/deepsec-deploy-%r@%h:%p -o C
 cd "$(dirname "$0")"
 run() { ssh $SSH_OPTS "$HOST" "$@"; }
 
-if [ "${2:-}" = "login" ]; then
-    # Сторож держит файл сеанса открытым — бот останавливается на время входа
-    ssh -t $SSH_OPTS "$HOST" \
-        "systemctl stop $SERVICE; cd $DIR && .venv/bin/python -m deepsec.server login; systemctl start $SERVICE"
-    exit 0
-fi
-
 run "mkdir -p $DIR"
 # На сервер едет только нужное для работы; .env, data/ и .venv/ на сервере не трогаются
 rsync -az --delete -e "ssh $SSH_OPTS" --exclude '__pycache__' \
@@ -118,3 +111,9 @@ if grep -q '^TG_API_ID=.' .env && [ ! -f data/guard.session ]; then
     echo ">>> Сторож ещё не вошёл в аккаунт: ./deploy.sh <этот хост> login"
 fi
 REMOTE
+
+if [ "${2:-}" = "login" ]; then
+    # Вход — уже на свежем коде. Сторож держит файл сеанса открытым, поэтому бот на время входа остановлен
+    ssh -t $SSH_OPTS "$HOST" \
+        "systemctl stop $SERVICE; cd $DIR && .venv/bin/python -m deepsec.server login; systemctl start $SERVICE"
+fi

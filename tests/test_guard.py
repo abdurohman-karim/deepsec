@@ -62,3 +62,80 @@ def test_keeps_trusted_phone():
 def test_errors_are_classified(error, expected):
     with pytest.raises(expected):
         asyncio.run(SessionGuard(FakeClient(error), noop).terminate_except(set()))
+
+
+class LoginClient:
+    """Имитирует Telegram: код сначала уходит в приложение, по повторному запросу — по SMS."""
+
+    api_id, api_hash = 1, "h"
+
+    def __init__(self, first_type, password_needed: bool = False):
+        self.first_type = first_type
+        self.password_needed = password_needed
+        self.requests = []
+        self.signed_in = []
+
+    async def connect(self):
+        pass
+
+    async def disconnect(self):
+        pass
+
+    async def is_user_authorized(self):
+        return False
+
+    async def __call__(self, request):
+        self.requests.append(request)
+        from telethon import types
+        if isinstance(request, functions.auth.SendCodeRequest):
+            return types.auth.SentCode(type=self.first_type, phone_code_hash="hash1",
+                                       next_type=types.auth.CodeTypeSms(), timeout=60)
+        return types.auth.SentCode(type=types.auth.SentCodeTypeSms(length=5), phone_code_hash="hash2")
+
+    async def sign_in(self, phone=None, code=None, *, password=None, phone_code_hash=None):
+        from telethon.errors import SessionPasswordNeededError
+        self.signed_in.append((phone, code, password, phone_code_hash))
+        if code and self.password_needed:
+            raise SessionPasswordNeededError(request=None)
+
+    async def get_me(self):
+        return SimpleNamespace(first_name="Abdu", last_name=None, id=1)
+
+
+def run_login(client, answers, secrets=()):
+    from deepsec.server.guard import interactive_login
+
+    said = []
+    answers, secrets = iter(answers), iter(secrets)
+    name = asyncio.run(interactive_login(None, 1, "h", ask=lambda _: next(answers), say=said.append,
+                                         ask_secret=lambda _: next(secrets), client=client))
+    return name, "\n".join(said)
+
+
+def test_login_says_where_code_went_and_resends_by_sms():
+    from telethon import types
+
+    client = LoginClient(types.auth.SentCodeTypeApp(length=5), password_needed=True)
+    name, said = run_login(client, ["+998 (90) 123-45-67", "", "12345"], secrets=["pass"])
+
+    assert name == "Abdu"
+    assert client.requests[0].phone_number == "+998901234567"
+    assert "чат «Telegram» с синей галочкой" in said and "отправит его по SMS" in said
+    assert isinstance(client.requests[1], functions.auth.ResendCodeRequest)
+    assert client.signed_in == [("+998901234567", "12345", None, "hash2"), (None, None, "pass", None)]
+
+
+def test_login_stops_when_email_setup_required():
+    from telethon import types
+
+    from deepsec.server.guard import GuardError
+
+    with pytest.raises(GuardError, match="почту для входа"):
+        run_login(LoginClient(types.auth.SentCodeTypeSetUpEmailRequired()), ["+998901234567"])
+
+
+def test_normalize_phone():
+    from deepsec.server.guard import normalize_phone
+
+    assert normalize_phone(" +998 90 123-45-67 ") == "+998901234567"
+    assert normalize_phone("abc") == ""
