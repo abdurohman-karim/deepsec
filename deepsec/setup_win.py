@@ -15,6 +15,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import psutil
 from dotenv import dotenv_values
@@ -123,11 +124,20 @@ def check_telegram_signatures(tdata_dirs: list[Path], trusted: dict[str, frozens
     return extra_signers
 
 
+def _with_port(url: str, port: str) -> str:
+    parts = urlsplit(url)
+    host = f"[{parts.hostname}]" if ":" in (parts.hostname or "") else parts.hostname
+    return urlunsplit(parts._replace(netloc=f"{host}:{port}"))
+
+
 def server_settings(existing: dict[str, str], opts: SetupOptions) -> dict[str, str]:
     """Параметры подключения: из флагов (перекрывают прежние), из старого .env или вопросом в консоли."""
     env: dict[str, str] = {}
     if opts.server:
         env["SERVER_URL"] = f"wss://{opts.server.strip()}:{(opts.port or DEFAULT_PORT).strip()}{AGENT_PATH}"
+    elif opts.port.strip() and existing.get("SERVER_URL"):
+        # Обновление, где адрес оставили пустым, а порт ввели: меняем только порт, иначе он молча потеряется.
+        env["SERVER_URL"] = _with_port(existing["SERVER_URL"], opts.port.strip())
     if opts.fingerprint:
         env["SERVER_FINGERPRINT"] = normalize_fingerprint(opts.fingerprint)
     if opts.token:
@@ -150,8 +160,9 @@ def server_settings(existing: dict[str, str], opts: SetupOptions) -> dict[str, s
     if missing:
         print("\nДанные сервера показал ./deploy.sh при выкладке (их же можно посмотреть в .env на сервере).")
     if not merged.get("SERVER_URL"):
+        default_port = opts.port.strip() or DEFAULT_PORT
         host = input("Адрес сервера (IP или домен): ").strip()
-        port = input(f"Порт агентов [{DEFAULT_PORT}]: ").strip() or DEFAULT_PORT
+        port = input(f"Порт агентов [{default_port}]: ").strip() or default_port
         merged["SERVER_URL"] = f"wss://{host}:{port}{AGENT_PATH}"
     if not merged.get("SERVER_FINGERPRINT"):
         merged["SERVER_FINGERPRINT"] = normalize_fingerprint(input("SHA-256 отпечаток сертификата сервера: "))

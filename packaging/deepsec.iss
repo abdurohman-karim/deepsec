@@ -56,10 +56,10 @@ begin
     'Данные напечатал ./deploy.sh при выкладке бота на сервер.',
     'Перед продолжением запустите Telegram Desktop. При обновлении поля можно оставить пустыми — сохранятся прежние настройки.');
   ServerPage.Add('Адрес сервера (IP или домен):', False);
-  ServerPage.Add('Порт агентов (LISTEN_PORT):', False);
+  { Порт не заполняем заранее: при обновлении подставленный 8443 затёр бы прежний порт. }
+  ServerPage.Add('Порт агентов (LISTEN_PORT, пусто — 8443 или прежний):', False);
   ServerPage.Add('Отпечаток сертификата (SHA-256):', False);
   ServerPage.Add('AGENT_TOKEN:', True);
-  ServerPage.Values[1] := '8443';
 end;
 
 function Quote(S: String): String;
@@ -71,7 +71,10 @@ function SetupParams(Param: String): String;
 begin
   Result := 'setup --yes --pause';
   if Trim(ServerPage.Values[0]) <> '' then
-    Result := Result + ' --server ' + Quote(ServerPage.Values[0]) + ' --port ' + Quote(ServerPage.Values[1]);
+    Result := Result + ' --server ' + Quote(ServerPage.Values[0]);
+  { Порт передаём и без адреса — при обновлении он заменит порт в прежнем SERVER_URL. }
+  if Trim(ServerPage.Values[1]) <> '' then
+    Result := Result + ' --port ' + Quote(ServerPage.Values[1]);
   if Trim(ServerPage.Values[2]) <> '' then
     Result := Result + ' --fingerprint ' + Quote(ServerPage.Values[2]);
   if Trim(ServerPage.Values[3]) <> '' then

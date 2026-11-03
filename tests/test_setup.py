@@ -24,6 +24,15 @@ def test_upgrade_keeps_previous_settings_when_fields_are_empty():
     assert server_settings(old, SetupOptions(token="new", yes=True))["AGENT_TOKEN"] == "new"
 
 
+def test_upgrade_with_only_port_changes_port():
+    old = {"SERVER_URL": "wss://203.0.113.10:8443/agent", "SERVER_FINGERPRINT": "aa", "AGENT_TOKEN": "t"}
+    env = server_settings(old, SetupOptions(port=" 8444 ", yes=True))
+    assert env["SERVER_URL"] == "wss://203.0.113.10:8444/agent"
+    assert env["SERVER_FINGERPRINT"] == "aa" and env["AGENT_TOKEN"] == "t"
+    v6 = {**old, "SERVER_URL": "wss://[2001:db8::1]:8443/agent"}
+    assert server_settings(v6, SetupOptions(port="8444", yes=True))["SERVER_URL"] == "wss://[2001:db8::1]:8444/agent"
+
+
 def test_installer_without_server_data_fails_clearly():
     with pytest.raises(SetupError, match="SERVER_FINGERPRINT, AGENT_TOKEN"):
         server_settings({}, SetupOptions(server="1.2.3.4", yes=True))
