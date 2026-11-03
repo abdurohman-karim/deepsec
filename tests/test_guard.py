@@ -116,7 +116,7 @@ def test_login_says_where_code_went_and_resends_by_sms():
     from telethon import types
 
     client = LoginClient(types.auth.SentCodeTypeApp(length=5), password_needed=True)
-    name, said = run_login(client, ["+998 (90) 123-45-67", "", "12345"], secrets=["pass"])
+    name, said = run_login(client, ["2", "+998 (90) 123-45-67", "", "12345"], secrets=["pass"])
 
     assert name == "Abdu"
     assert client.requests[0].phone_number == "+998901234567"
@@ -131,7 +131,7 @@ def test_login_stops_when_email_setup_required():
     from deepsec.server.guard import GuardError
 
     with pytest.raises(GuardError, match="почту для входа"):
-        run_login(LoginClient(types.auth.SentCodeTypeSetUpEmailRequired()), ["+998901234567"])
+        run_login(LoginClient(types.auth.SentCodeTypeSetUpEmailRequired()), ["2", "+998901234567"])
 
 
 def test_normalize_phone():
@@ -139,3 +139,37 @@ def test_normalize_phone():
 
     assert normalize_phone(" +998 90 123-45-67 ") == "+998901234567"
     assert normalize_phone("abc") == ""
+
+
+class FakeQR:
+    url = "tg://login?token=abc"
+
+    def __init__(self, outcomes):
+        self.outcomes = list(outcomes)
+        self.recreated = 0
+
+    async def wait(self):
+        outcome = self.outcomes.pop(0)
+        if outcome:
+            raise outcome
+
+    async def recreate(self):
+        self.recreated += 1
+
+
+def test_qr_login_is_default_and_refreshes_expired_code():
+    from telethon.errors import SessionPasswordNeededError
+
+    client = LoginClient(None)
+    qr = FakeQR([asyncio.TimeoutError(), SessionPasswordNeededError(request=None)])
+
+    async def qr_login():
+        return qr
+
+    client.qr_login = qr_login
+    name, said = run_login(client, [""], secrets=["pass"])
+
+    assert name == "Abdu" and qr.recreated == 1
+    assert said.count("█") > 50  # QR нарисован в терминале, дважды
+    assert "Подключить устройство" in said
+    assert client.signed_in == [(None, None, "pass", None)]

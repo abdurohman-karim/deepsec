@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib
 import logging
 import sys
 import time
@@ -43,14 +44,54 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="deepsec", description="Windows-агент DeepSec (бот — в deepsec.server)")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("run", help="запустить агента (обычно это делает планировщик от SYSTEM)")
-    sub.add_parser("setup", help="установка: аудит, ловушки, бот, автозапуск (от администратора)")
+    setup_cmd = sub.add_parser("setup", help="установка: аудит, ловушки, подключение к серверу, автозапуск")
+    setup_cmd.add_argument("--server", default="", help="IP или домен сервера")
+    setup_cmd.add_argument("--port", default="", help="порт агентов (LISTEN_PORT на сервере)")
+    setup_cmd.add_argument("--fingerprint", default="", help="SHA-256 отпечаток сертификата сервера")
+    setup_cmd.add_argument("--token", default="", help="AGENT_TOKEN с сервера")
+    setup_cmd.add_argument("--name", default="", help="имя компьютера в боте")
+    setup_cmd.add_argument("--yes", action="store_true", help="не задавать вопросов (для установщика)")
     sub.add_parser("check", help="диагностика: где tdata, кем подписан Telegram.exe")
+    sub.add_parser("uninstall", help="убрать задачу, правила брандмауэра, ловушки и настройки")
+    sub.add_parser("version", help="версия; заодно проверяет, что сборка цела")
+    for cmd in sub.choices.values():
+        cmd.add_argument("--pause", action="store_true", help="ждать Enter перед выходом (окно не закроется)")
     args = parser.parse_args(argv)
 
+    try:
+        return _dispatch(args)
+    except KeyboardInterrupt:
+        return 1
+    except Exception as e:  # из установщика окно закроется — покажем причину по-человечески
+        if not args.pause:
+            raise
+        print(f"\n⛔ Ошибка: {e}")
+        return 1
+    finally:
+        if args.pause:
+            input("\nНажмите Enter, чтобы закрыть окно…")
+
+
+def _dispatch(args: argparse.Namespace) -> int:
     if args.command == "run":
         return run()
-    from .setup_win import check, setup
-    return setup() if args.command == "setup" else check()
+    if args.command == "version":
+        from . import __version__
+
+        # Импорт проверяет, что в сборке PyInstaller есть всё нужное агенту (CI запускает это после сборки).
+        for module in ("deepsec.agent", "deepsec.setup_win", *(("win32evtlog",) if sys.platform == "win32" else ())):
+            importlib.import_module(module)
+        print(__version__)
+        return 0
+    from . import setup_win
+
+    if args.command == "setup":
+        opts = setup_win.SetupOptions(server=args.server, port=args.port, fingerprint=args.fingerprint,
+                                      token=args.token, name=args.name, yes=args.yes)
+        return setup_win.setup(opts)
+    if args.command == "uninstall":
+        return setup_win.uninstall()
+    return setup_win.check()
 
 
 if __name__ == "__main__":

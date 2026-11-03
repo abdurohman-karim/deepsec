@@ -1,0 +1,47 @@
+name: Windows installer
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "deepsec/**"
+      - "packaging/**"
+      - "tests/**"
+      - "requirements*.txt"
+      - ".github/workflows/windows-installer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Все тесты — на настоящей Windows, до сборки
+      - name: Tests
+        run: |
+          python -m pip install --quiet -r requirements.txt -r requirements-agent.txt pytest
+          python -m pytest -q
+
+      - name: Build installer
+        shell: pwsh
+        run: ./packaging/build.ps1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DeepSecSetup
+          path: dist/DeepSecSetup-*.exe
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/DeepSecSetup-*.exe

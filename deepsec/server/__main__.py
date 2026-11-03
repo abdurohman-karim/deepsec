@@ -37,8 +37,15 @@ async def serve(cfg: ServerConfig) -> None:
     tls.load_cert_chain(cfg.tls_cert, cfg.tls_key)
     runner = web.AppRunner(server.hub.app())
     await runner.setup()
-    await web.TCPSite(runner, cfg.listen_host, cfg.listen_port, ssl_context=tls).start()
-    log.info("Жду агентов на %s:%s", cfg.listen_host, cfg.listen_port)
+    try:
+        await web.TCPSite(runner, cfg.listen_host, cfg.listen_port, ssl_context=tls).start()
+        log.info("Жду агентов на %s:%s", cfg.listen_host, cfg.listen_port)
+    except OSError as e:
+        # Бот и сторож нужны и без агентов — не падаем, а сообщаем владельцу.
+        log.error("Не удалось открыть порт %s для агентов: %s", cfg.listen_port, e)
+        notifier.send(f"⚠️ Не могу открыть порт {cfg.listen_port} для агентов ({e.strerror}). Бот и сторож "
+                      "работают, но компьютеры не подключатся. Поменяйте LISTEN_PORT в .env на сервере и "
+                      "выполните <code>systemctl restart deepsec-bot</code>.")
 
     tasks = [notifier.run(), server.watch_agents(), dp.start_polling(bot, handle_signals=False)]
     if cfg.api_id:

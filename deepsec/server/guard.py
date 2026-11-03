@@ -6,7 +6,9 @@
 """
 from __future__ import annotations
 
+import asyncio
 import getpass
+import io
 import logging
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass
@@ -179,13 +181,18 @@ async def interactive_login(
     ask_secret: Callable[[str], str] = getpass.getpass,
     client=None,
 ) -> str:
-    """Вход сторожа из консоли: номер, код, облачный пароль. Говорит, куда Telegram отправил код,
-    и по пустому Enter просит отправить его другим способом. Возвращает имя аккаунта."""
+    """Вход сторожа из консоли. По умолчанию — QR-код, который сканирует телефон: код входа не нужен,
+    а Telegram нередко не доставляет его сторонним приложениям с IP хостинга. Запасной путь — номер и код.
+    Возвращает имя аккаунта."""
     client = client or make_client(session_path, api_id, api_hash)
     await client.connect()
     try:
         if not await client.is_user_authorized():
-            await _sign_in(client, ask, say, ask_secret)
+            choice = ask("Как войти? 1 — QR-код с телефона (рекомендуется), 2 — номер и код [1]: ").strip()
+            if choice == "2":
+                await _sign_in(client, ask, say, ask_secret)
+            else:
+                await _qr_sign_in(client, say, ask_secret)
         me = await client.get_me()
     finally:
         await client.disconnect()
@@ -242,8 +249,37 @@ async def _sign_in(client, ask, say, ask_secret) -> None:
             sent = await client(functions.auth.SendCodeRequest(phone, client.api_id, client.api_hash,
                                                                types.CodeSettings()))
         except SessionPasswordNeededError:
-            break
+            await _password(client, say, ask_secret)
+            return
 
+
+def render_qr(url: str) -> str:
+    import qrcode
+
+    qr = qrcode.QRCode(border=2)
+    qr.add_data(url)
+    out = io.StringIO()
+    qr.print_ascii(out=out, invert=True)  # тёмные модули на светлом фоне — для тёмного терминала
+    return out.getvalue()
+
+
+async def _qr_sign_in(client, say, ask_secret) -> None:
+    qr = await client.qr_login()
+    say("На телефоне: Telegram → Настройки → Устройства → «Подключить устройство» и наведите камеру на QR-код.")
+    while True:
+        say(render_qr(qr.url))
+        say("QR-код живёт около 30 секунд — если не успели, ниже появится новый.")
+        try:
+            await qr.wait()
+            return
+        except asyncio.TimeoutError:
+            await qr.recreate()
+        except SessionPasswordNeededError:
+            await _password(client, say, ask_secret)
+            return
+
+
+async def _password(client, say, ask_secret) -> None:
     while True:
         try:
             await client.sign_in(password=ask_secret("Облачный пароль (2FA, символы не отображаются): "))

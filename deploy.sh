@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Выкладка бота на сервер. Запускать с вашего компьютера из папки проекта:
 #   ./deploy.sh root@IP_СЕРВЕРА          — выложить / обновить
-#   ./deploy.sh root@IP_СЕРВЕРА login    — подключить сторожа аккаунта (номер, код, облачный пароль)
+#   ./deploy.sh root@IP_СЕРВЕРА login    — подключить сторожа аккаунта (QR-код с телефона)
 # Пароль (или ключ) SSH вводите вы сами. Повторный запуск = обновление.
 set -euo pipefail
 
@@ -86,6 +86,11 @@ if [ -n "$NEW_TOKEN" ]; then
     echo ">>>    AGENT_TOKEN:   $NEW_TOKEN"
 else
     echo ">>>    AGENT_TOKEN:   grep AGENT_TOKEN $DIR/.env"
+fi
+# Порт может быть занят другой программой (например, Apache) — тогда агенты не подключатся
+if ss -ltnp "sport = :$PORT" | grep -q LISTEN && ! ss -ltnp "sport = :$PORT" | grep -q python; then
+    echo ">>> ⚠️  Порт $PORT занят: $(ss -ltnp "sport = :$PORT" | grep -o 'users:(("[^"]*' | cut -d'"' -f2 | head -1)."
+    echo ">>>     Впишите свободный порт в LISTEN_PORT (nano $DIR/.env) и запустите ./deploy.sh ещё раз."
 fi
 if command -v ufw >/dev/null && ufw status | grep -q "Status: active" && ! ufw status | grep -q "^$PORT/tcp"; then
     echo ">>> ⚠️  Брандмауэр ufw включён — откройте порт агентам: ufw allow $PORT/tcp"
