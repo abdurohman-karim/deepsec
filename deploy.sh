@@ -3,20 +3,33 @@
 #   ./deploy.sh root@IP_СЕРВЕРА          — выложить / обновить
 #   ./deploy.sh root@IP_СЕРВЕРА login    — подключить сторожа аккаунта (QR-код с телефона)
 # Пароль (или ключ) SSH вводите вы сами. Повторный запуск = обновление.
+# На Windows — из Git Bash (не из PowerShell): там нет rsync, поэтому файлы едут через tar.
 set -euo pipefail
 
-HOST="${1:?Использование: ./deploy.sh user@host [login]}"
+if [ -z "${1:-}" ]; then
+    echo "Использование: ./deploy.sh user@host [login]   (например: ./deploy.sh root@203.0.113.10)" >&2
+    exit 1
+fi
+HOST=$1
 DIR=/home/bots/deepsec
 SERVICE=deepsec-bot
 SSH_OPTS="-o ControlMaster=auto -o ControlPath=/tmp/deepsec-deploy-%r@%h:%p -o ControlPersist=120"
+case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*) SSH_OPTS="" ;;  # в Git Bash общее SSH-соединение не работает — пароль спросят пару раз
+esac
 
 cd "$(dirname "$0")"
 run() { ssh $SSH_OPTS "$HOST" "$@"; }
 
 run "mkdir -p $DIR"
 # На сервер едет только нужное для работы; .env, data/ и .venv/ на сервере не трогаются
-rsync -az --delete -e "ssh $SSH_OPTS" --exclude '__pycache__' \
-    deepsec requirements.txt .env.example "$SERVICE.service" "$HOST:$DIR/"
+FILES=(deepsec requirements.txt .env.example "$SERVICE.service")
+if command -v rsync >/dev/null; then
+    rsync -az --delete -e "ssh $SSH_OPTS" --exclude '__pycache__' "${FILES[@]}" "$HOST:$DIR/"
+else
+    # Без rsync: старый код удаляем целиком, как сделал бы --delete
+    tar -czf - --exclude '__pycache__' "${FILES[@]}" | run "cd $DIR && rm -rf deepsec && tar -xzf -"
+fi
 
 run "DIR=$DIR SERVICE=$SERVICE SERVER_HOST=${HOST#*@} bash -s" <<'REMOTE'
 set -euo pipefail
