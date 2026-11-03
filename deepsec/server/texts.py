@@ -199,6 +199,8 @@ def screenshot_caption(name: str, data: dict | None) -> str:
 
 def desktop_failure(result: CommandResult) -> str:
     """Почему не вышло — простым текстом (уходит в notice, который экранируется)."""
+    if result.text.startswith("неизвестная команда"):
+        return "⚠️ На компьютере старый агент — он этого не умеет. Поставьте новую версию установщика поверх."
     data = result.data or {}
     parts = [f"⚠️ {result.text or 'нет ответа'}"]
     if data.get("user"):

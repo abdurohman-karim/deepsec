@@ -108,6 +108,8 @@ def test_desktop_failures_and_caption():
     locked = CommandResult(False, "экран заблокирован", {"user": "me", "locked": True, "idle": 900})
     assert texts.desktop_failure(locked) == "⚠️ экран заблокирован · пользователь me"
     assert "компьютер не на связи" in texts.apps("HOME-PC", CommandResult(False, "компьютер не на связи"))
+    old_agent = CommandResult(False, "неизвестная команда screenshot")
+    assert "старый агент" in texts.desktop_failure(old_agent)
     caption = texts.screenshot_caption("HOME-PC", {**APPS, "idle": 5})
     assert "Работают прямо сейчас" in caption and "chrome.exe" in caption
     assert all(len(b.callback_data) <= 64 for row in kb.apps("HOME-PC").inline_keyboard for b in row)
