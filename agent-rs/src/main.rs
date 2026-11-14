@@ -17,6 +17,7 @@ mod monitors;
 mod pet;
 mod protocol;
 mod response;
+mod setup;
 mod state;
 mod trust;
 mod update;
@@ -45,20 +46,47 @@ struct Cli {
 enum Command {
     /// Запустить агента (обычно это делает планировщик от SYSTEM).
     Run,
+    /// Установка: аудит, ловушки, подключение к серверу, автозапуск.
+    Setup {
+        /// IP или домен сервера.
+        #[arg(long, default_value = "")]
+        server: String,
+        /// Порт агентов (LISTEN_PORT на сервере).
+        #[arg(long, default_value = "")]
+        port: String,
+        /// SHA-256 отпечаток сертификата сервера.
+        #[arg(long, default_value = "")]
+        fingerprint: String,
+        /// AGENT_TOKEN с сервера.
+        #[arg(long, default_value = "")]
+        token: String,
+        /// Имя компьютера в боте.
+        #[arg(long, default_value = "")]
+        name: String,
+        /// Не задавать вопросов (для установщика).
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Диагностика: где tdata, кем подписан Telegram.exe.
+    Check,
+    /// Убрать задачу, правила брандмауэра, ловушки и настройки.
+    Uninstall,
     /// Версия.
     Version,
+    /// Окно DeepSec: состояние агента и обновление с прогрессом.
+    Ui {
+        /// Служебная: после обновления из окна.
+        #[arg(long, default_value = "")]
+        updated_from: String,
+    },
+    /// Поставить новую версию из релизов GitHub, сохранив настройки (от администратора).
+    Update,
     /// Служебная: агент запускает её в сеансе пользователя.
     Desktop {
         #[arg(value_parser = ["screenshot", "apps", "close"])]
         what: String,
         /// Для close: PID и HWND окна.
         args: Vec<String>,
-    },
-    /// Окно DeepSec: состояние агента и обновление с прогрессом.
-    Ui {
-        /// Служебная: после обновления из окна.
-        #[arg(long, default_value = "")]
-        updated_from: String,
     },
     /// Пиксельный «Большой глаз» в углу экрана (агент запускает его по команде из бота).
     Pet {
@@ -73,17 +101,11 @@ enum Command {
     },
 }
 
-fn run() -> i32 {
-    let cfg = match config::Config::load() {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            eprintln!("{e:#}");
-            return 1;
-        }
-    };
+fn run() -> anyhow::Result<i32> {
+    let cfg = config::Config::load()?;
     let _ = std::fs::create_dir_all(&cfg.data_dir);
     logger::init(cfg.data_dir.join("agent.log"), true);
-    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("tokio");
+    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     loop {
         let agent = agent::Agent::new(cfg.clone());
         if let Err(e) = runtime.block_on(agent.run()) {
@@ -93,17 +115,38 @@ fn run() -> i32 {
     }
 }
 
-fn main() {
-    let cli = Cli::parse();
-    let code = match cli.command {
+fn dispatch(command: Command) -> anyhow::Result<i32> {
+    match command {
         Command::Run => run(),
+        Command::Setup { server, port, fingerprint, token, name, yes } => {
+            setup::setup(&setup::SetupOptions { server, port, fingerprint, token, name, yes })
+        }
+        Command::Check => setup::check(),
+        Command::Uninstall => setup::uninstall(),
+        Command::Update => setup::update_console(),
         Command::Version => {
             println!("{VERSION}");
-            0
+            Ok(0)
         }
-        Command::Desktop { what, args } => desktop::helper_main(&what, &args),
-        Command::Pet { mood, text, minutes } => pet::main(&mood, &text, minutes),
-        Command::Ui { updated_from } => window::main(&updated_from),
+        Command::Ui { updated_from } => Ok(window::main(&updated_from)),
+        Command::Desktop { what, args } => Ok(desktop::helper_main(&what, &args)),
+        Command::Pet { mood, text, minutes } => Ok(pet::main(&mood, &text, minutes)),
+    }
+}
+
+fn main() {
+    let cli = Cli::parse();
+    let code = match dispatch(cli.command) {
+        Ok(code) => code,
+        // Из установщика окно закроется — покажем причину по-человечески
+        Err(e) => {
+            if cli.pause {
+                println!("\n⛔ Ошибка: {e:#}");
+            } else {
+                eprintln!("{e:#}");
+            }
+            1
+        }
     };
     if cli.pause {
         println!("\nНажмите Enter, чтобы закрыть окно…");
