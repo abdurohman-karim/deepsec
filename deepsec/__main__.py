@@ -103,7 +103,8 @@ def _dispatch(args: argparse.Namespace) -> int:
         # Импорт проверяет, что в сборке PyInstaller есть всё нужное агенту (CI запускает это после сборки).
         windows_only = ("win32evtlog", "win32ts", "win32profile", "win32pipe", "win32file", "win32event",
                         "win32service", "win32gui", "win32process", "PIL.ImageGrab")
-        for module in ("deepsec.agent", "deepsec.setup_win", "deepsec.pet", "deepsec.window", "tkinter",
+        for module in ("deepsec.agent", "deepsec.setup_win", "deepsec.pet", "deepsec.window", "deepsec.brand",
+                       "tkinter", "PIL.ImageTk",
                        *(windows_only if sys.platform == "win32" else ())):
             importlib.import_module(module)
         print(__version__)

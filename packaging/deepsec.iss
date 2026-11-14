@@ -26,6 +26,9 @@ SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayName=DeepSec Agent
 UninstallDisplayIcon={app}\DeepSecAgent.exe
+; Иконку и картинку мастера рисует build.ps1 (python -m deepsec.brand build)
+SetupIconFile=..\build\deepsec.ico
+WizardSmallImageFile=..\build\wizard-small.bmp
 
 [Languages]
 Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"

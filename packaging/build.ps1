@@ -11,10 +11,15 @@ python -m pip install --quiet -r requirements-agent.txt pyinstaller
 Check 'pip install'
 $version = (python -c "import deepsec; print(deepsec.__version__)").Trim()
 
+# Иконка (пиксельный глаз) и картинка мастера рисуются кодом — в репозитории только исходник.
+python -m deepsec.brand build
+Check 'deepsec.brand'
+$icon = (Resolve-Path build\deepsec.ico).Path
+
 # onedir, а не onefile: файлы лежат в Program Files (писать туда может только администратор),
 # а не распаковываются при каждом запуске во временную папку.
-python -m PyInstaller --noconfirm --clean --console --name DeepSecAgent `
-    --hidden-import deepsec.agent --hidden-import deepsec.setup_win `
+python -m PyInstaller --noconfirm --clean --console --name DeepSecAgent --icon $icon `
+    --hidden-import deepsec.agent --hidden-import deepsec.setup_win --hidden-import deepsec.window `
     --distpath dist --workpath build --specpath build packaging\agent_entry.py
 Check 'PyInstaller'
 
