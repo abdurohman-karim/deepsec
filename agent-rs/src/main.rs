@@ -3,14 +3,23 @@
 //! Команды и файлы те же, что у Python-агента, — установщик, задача планировщика и сервер не меняются:
 //! run, setup, check, uninstall, version, ui, update, desktop, pet.
 
+mod agent;
 mod config;
 mod detector;
+mod eventlog;
 mod incidents;
+mod link;
+mod logger;
 mod monitors;
 mod protocol;
+mod response;
 mod state;
 mod trust;
+mod win;
+mod winacl;
 mod winevent;
+
+use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
@@ -34,13 +43,30 @@ enum Command {
     Version,
 }
 
+fn run() -> i32 {
+    let cfg = match config::Config::load() {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("{e:#}");
+            return 1;
+        }
+    };
+    let _ = std::fs::create_dir_all(&cfg.data_dir);
+    logger::init(cfg.data_dir.join("agent.log"), true);
+    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("tokio");
+    loop {
+        let agent = agent::Agent::new(cfg.clone());
+        if let Err(e) = runtime.block_on(agent.run()) {
+            log::error!("Агент упал — перезапуск через 10 секунд: {e:#}");
+        }
+        std::thread::sleep(Duration::from_secs(10));
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
     let code = match cli.command {
-        Command::Run => {
-            eprintln!("Rust-агент ещё в разработке — работает Python-агент из установщика");
-            1
-        }
+        Command::Run => run(),
         Command::Version => {
             println!("{VERSION}");
             0

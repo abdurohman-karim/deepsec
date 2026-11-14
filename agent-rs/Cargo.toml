@@ -14,13 +14,37 @@ anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4", features = ["derive"] }
 dotenvy = "0.15"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 hex = "0.4"
-log = "0.4"
+log = { version = "0.4", features = ["std"] }
 quick-xml = "0.42"
 rand = "0.10"
+# ring, а не aws-lc-rs: собирается без cmake/NASM
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha1 = "0.11"
 sha2 = "0.11"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Security",
+    "Win32_Security_Cryptography",
+    "Win32_Security_Cryptography_Catalog",
+    "Win32_Security_Cryptography_Sip",
+    "Win32_Security_WinTrust",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_EventLog",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_Shutdown",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -227,7 +227,7 @@ impl Detector {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::config::Config;
     use crate::winevent::{parse_event_xml, tests::event_xml};
