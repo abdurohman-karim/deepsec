@@ -15,7 +15,6 @@ anyhow = "1"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4", features = ["derive"] }
-dotenvy = "0.15"
 # окно DeepSec: egui на OpenGL, без лишних платформ
 eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }

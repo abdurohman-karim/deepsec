@@ -117,14 +117,32 @@ impl Config {
     }
 }
 
-/// .env в формате python-dotenv: KEY=value, комментарии, необязательные кавычки.
-pub fn read_env(path: &Path) -> Result<HashMap<String, String>> {
-    let mut env = HashMap::new();
-    for item in dotenvy::from_path_iter(path)? {
-        let (k, v) = item?;
-        env.insert(k, v);
+/// .env в формате python-dotenv: KEY=value, комментарии, необязательные кавычки. Обратные слэши без кавычек —
+/// как есть: в путях Windows (C:\Users\…) это не escape-последовательности (dotenvy на них спотыкается).
+pub fn parse_env(text: &str) -> Vec<(String, String)> {
+    let mut env = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let line = line.strip_prefix("export ").unwrap_or(line);
+        let Some((key, value)) = line.split_once('=') else { continue };
+        let value = value.trim();
+        let value = match value.chars().next() {
+            Some(q @ ('"' | '\'')) if value.len() >= 2 && value.ends_with(q) => {
+                let inner = &value[1..value.len() - 1];
+                if q == '"' { inner.replace("\\\"", "\"").replace("\\n", "\n") } else { inner.to_string() }
+            }
+            _ => value.split(" #").next().unwrap_or("").trim_end().to_string(), // комментарий в конце строки
+        };
+        env.push((key.trim().to_string(), value));
     }
-    Ok(env)
+    env
+}
+
+pub fn read_env(path: &Path) -> Result<HashMap<String, String>> {
+    Ok(parse_env(&std::fs::read_to_string(path)?).into_iter().collect())
 }
 
 pub fn computer_name() -> String {
@@ -173,9 +191,13 @@ mod tests {
     fn env_file_like_python_dotenv() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(".env");
-        std::fs::write(&path, "# комментарий\nSERVER_URL=wss://203.0.113.10:8444/agent\nAGENT_NAME=\"Мой ПК\"\n").unwrap();
+        // Как пишет setup: пути Windows без кавычек, с пробелами и обратными слэшами
+        std::fs::write(&path, "# комментарий\nSERVER_URL=wss://203.0.113.10:8444/agent\nAGENT_NAME=\"Мой ПК\"\n\
+            TDATA_DIRS=C:\\Users\\me\\AppData\\Roaming\\Telegram Desktop\\tdata\nDECOY_DIRS=C:\\a\\tdata;C:\\b\\tdata\n").unwrap();
         let env = read_env(&path).unwrap();
         assert_eq!(env["SERVER_URL"], "wss://203.0.113.10:8444/agent");
         assert_eq!(env["AGENT_NAME"], "Мой ПК");
+        assert_eq!(env["TDATA_DIRS"], r"C:\Users\me\AppData\Roaming\Telegram Desktop\tdata");
+        assert_eq!(split_list(Some(&env["DECOY_DIRS"])), vec![r"C:\a\tdata", r"C:\b\tdata"]);
     }
 }

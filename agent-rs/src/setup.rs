@@ -76,8 +76,8 @@ fn ask(prompt: &str, default: bool, opts: &SetupOptions) -> bool {
 }
 
 pub fn load_env(path: &Path) -> Env {
-    let Ok(iter) = dotenvy::from_path_iter(path) else { return Env::new() };
-    iter.flatten().filter(|(_, v)| !v.is_empty()).collect()
+    let Ok(text) = std::fs::read_to_string(path) else { return Env::new() };
+    config::parse_env(&text).into_iter().filter(|(_, v)| !v.is_empty()).collect()
 }
 
 /// Сменить только порт в прежнем SERVER_URL (IPv6 — в квадратных скобках).
