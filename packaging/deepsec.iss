@@ -26,7 +26,7 @@ SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayName=DeepSec Agent
 UninstallDisplayIcon={app}\DeepSecAgent.exe
-; Иконку и картинку мастера рисует build.ps1 (python -m deepsec.brand build)
+; Иконку и картинку мастера рисует сборка Rust-агента (agent-rs/build.rs) — тем же кодом, что логотип в окне
 ; Процессы DeepSecAgent.exe закрывает PrepareToInstall — Restart Manager не нужен (из другого сеанса он не может)
 CloseApplications=no
 SetupIconFile=..\build\deepsec.ico
@@ -35,8 +35,13 @@ WizardSmallImageFile=..\build\wizard-small.bmp
 [Languages]
 Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"
 
+[InstallDelete]
+; С 0.7.0 агент — один exe на Rust: убираем Python-сборку прежних версий (PyInstaller, папка _internal)
+Type: filesandordirs; Name: "{app}\_internal"
+Type: files; Name: "{app}\DeepSecAgent.python.exe"
+
 [Files]
-Source: "..\dist\DeepSecAgent\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\agent-rs\target\release\DeepSecAgent.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\DeepSec"; Filename: "{app}\DeepSecAgent.exe"; Parameters: "ui"

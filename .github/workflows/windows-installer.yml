@@ -5,6 +5,7 @@ on:
     branches: [main]
     tags: ["v*"]
     paths:
+      - "agent-rs/**"
       - "deepsec/**"
       - "packaging/**"
       - "tests/**"
@@ -25,11 +26,21 @@ jobs:
         with:
           python-version: "3.12"
 
-      # Все тесты — на настоящей Windows, до сборки
-      - name: Tests
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: agent-rs
+
+      # Все тесты — на настоящей Windows, до сборки: сервер на Python, агент на Rust
+      - name: Server tests
         run: |
           python -m pip install --quiet -r requirements.txt -r requirements-agent.txt pytest
           python -m pytest -q
+
+      - name: Agent tests
+        working-directory: agent-rs
+        run: cargo test --locked
 
       - name: Build installer
         shell: pwsh
@@ -43,7 +54,7 @@ jobs:
       - name: Version
         id: version
         shell: pwsh
-        run: echo "version=$(python -c 'import deepsec; print(deepsec.__version__)')" >> $env:GITHUB_OUTPUT
+        run: echo "version=$((& agent-rs/target/release/DeepSecAgent.exe version).Trim())" >> $env:GITHUB_OUTPUT
 
       # Каждая версия из main — релиз vX.Y.Z: оттуда агент сам скачивает обновление (кнопка «Обновить»),
       # а GitHub публикует SHA-256 файла, по которому агент проверяет скачанное.

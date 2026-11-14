@@ -85,6 +85,10 @@
 
 Нужны Windows 10/11 x64 и Telegram Desktop с telegram.org (версия из Microsoft Store пока не поддерживается).
 
+С 0.7.0 агент написан на Rust (`agent-rs/`): один `DeepSecAgent.exe` ~8 МБ вместо Python-сборки ~20 МБ,
+~14 МБ памяти, подпись Telegram проверяется через WinVerifyTrust, а не PowerShell. Файлы (`.env`,
+`state.json`, журнал), команды и протокол с сервером прежние — обновление с 0.6.x проходит как обычно.
+
 ### Установщик (рекомендуется)
 
 1. Скачайте `DeepSecSetup-<версия>.exe`: GitHub → Actions → «Windows installer» → последний запуск →
@@ -120,23 +124,15 @@ GitHub считает его SHA-256. Агент раз в 6 часов пров
 Установщик не подписан цифровой подписью, поэтому SmartScreen покажет «Неизвестный издатель»:
 «Подробнее» → «Выполнить в любом случае».
 
-Собрать установщик самому (на Windows): `powershell -ExecutionPolicy Bypass -File packaging\build.ps1`.
+Собрать установщик самому (на Windows, нужны Rust и Inno Setup 6):
+`powershell -ExecutionPolicy Bypass -File packaging\build.ps1`.
 
 ### Из исходников
 
-1. Положите проект туда, куда без прав администратора писать нельзя: агент работает от SYSTEM,
-   и код в папке пользователя вирус мог бы подменить. Нужен Python 3.11+.
-   ```powershell
-   # PowerShell от имени администратора
-   git clone <repo> "C:\Program Files\DeepSec"
-   cd "C:\Program Files\DeepSec"
-   py -3.12 -m venv .venv
-   .venv\Scripts\pip install -r requirements-agent.txt
-   ```
-2. Запустите Telegram Desktop и выполните setup (от администратора) — он спросит данные сервера:
-   ```powershell
-   .venv\Scripts\python -m deepsec setup
-   ```
+Соберите агента (`cargo build --release --manifest-path agent-rs\Cargo.toml`) и положите
+`DeepSecAgent.exe` туда, куда без прав администратора писать нельзя, например `C:\Program Files\DeepSec`:
+агент работает от SYSTEM, и exe в папке пользователя вирус мог бы подменить. Затем запустите Telegram
+Desktop и от администратора выполните `DeepSecAgent.exe setup` — он спросит данные сервера.
 
 ### После установки
 
@@ -145,7 +141,7 @@ GitHub считает его SHA-256. Агент раз в 6 часов пров
    и вы не потеряете доступ к аккаунту. Без доверенных завершаются все сеансы — для входа понадобятся
    SMS-код и облачный пароль.
 
-Диагностика: «Проверить DeepSec» в меню «Пуск» (или `python -m deepsec check`). Лог: `C:\ProgramData\DeepSec\agent.log`.
+Диагностика: «Проверить DeepSec» в меню «Пуск» (или `DeepSecAgent.exe check`). Лог: `C:\ProgramData\DeepSec\agent.log`.
 Агентов может быть несколько — каждый компьютер появится в меню отдельно.
 
 ### Проверка «боевой» реакции
@@ -207,9 +203,11 @@ copy C:\Windows\System32\certutil.exe $env:TEMP\stealer-test.exe
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt -r requirements-agent.txt pytest
-.venv/bin/pytest
+.venv/bin/pytest                              # сервер (и прежний Python-агент)
+cargo test --manifest-path agent-rs/Cargo.toml   # агент на Rust, на Windows
 ```
 
-Серверный код — Python 3.10+ (`deepsec/server`, общие `incidents.py`, `state.py`, `protocol.py`, `totp.py`),
-агент — 3.11+. Логика тестируется на любой ОС, включая настоящий WebSocket между агентом и сервером;
-Windows-специфичное (`monitors/eventlog.py`, `response.py`, `winacl.py`, `setup_win.py`) — только на Windows.
+Сервер — Python 3.10+ (`deepsec/server`, общие `incidents.py`, `state.py`, `protocol.py`, `totp.py`).
+Агент — Rust (`agent-rs/`): тесты детектора и разбора событий перенесены с Python один в один, есть сквозной
+тест WebSocket между агентом и сервером. Python-агент в `deepsec/` больше не собирается в установщик и
+остаётся как образец поведения.
