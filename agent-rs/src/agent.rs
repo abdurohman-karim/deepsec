@@ -19,7 +19,8 @@ use crate::monitors::RemoteToolWatcher;
 use crate::protocol::{PET_MAX_TEXT, PET_MOODS};
 use crate::state::{AgentState, Journal, Outbox};
 use crate::trust::{TrustChecker, sha256_file};
-use crate::{VERSION, desktop, response, win, winacl, winevent};
+use crate::update::{self, Updater};
+use crate::{VERSION, control, desktop, response, win, winacl, winevent};
 
 /// Повторные чтения тем же процессом в течение минуты дописываются в первый инцидент.
 const MERGE_WINDOW: Duration = Duration::from_secs(60);
@@ -28,6 +29,11 @@ const NOTIFY_DELAY: Duration = Duration::from_millis(1500);
 const SELFTEST_TIMEOUT: Duration = Duration::from_secs(15);
 /// Проводник держит рабочий стол и панель задач: его окна закрываем только мягко, процесс не завершаем.
 const NEVER_FORCE: [&str; 1] = ["explorer.exe"];
+/// К этому времени установщик, перезапустивший агента, уже точно завершился.
+const UPDATE_FIRST_CHECK: Duration = Duration::from_secs(120);
+const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 3600);
+/// Дать новому агенту подключиться, прежде чем открыть окно DeepSec.
+const REOPEN_DELAY: Duration = Duration::from_secs(3);
 
 type MergeKey = (Kind, Option<u32>, Option<String>);
 
@@ -45,6 +51,7 @@ pub struct Agent {
     recent: Mutex<HashMap<MergeKey, (Arc<Mutex<Incident>>, Instant)>>,
     /// (PID, настроение) глаза на экране.
     pet: Mutex<Option<(u32, String)>>,
+    pub updater: Updater,
 }
 
 impl Agent {
@@ -52,6 +59,8 @@ impl Agent {
         let data_dir = cfg.data_dir.clone();
         let _ = std::fs::create_dir_all(&data_dir);
         let link = Arc::new(Link::new(cfg.clone(), Outbox::new(Some(data_dir.join("outbox.json")), 200)));
+        let notify = link.clone();
+        let updater = Updater::new(VERSION, &data_dir, &cfg.update_repo, Arc::new(move || notify.push_status()));
         Arc::new(Agent {
             state: Mutex::new(AgentState::load(&data_dir.join("state.json"))),
             journal: Mutex::new(Journal::new(Some(data_dir.join("incidents.jsonl")), 300)),
@@ -64,6 +73,7 @@ impl Agent {
             own_exe: win::own_exe(),
             recent: Mutex::new(HashMap::new()),
             pet: Mutex::new(None),
+            updater,
             cfg,
         })
     }
@@ -89,7 +99,10 @@ impl Agent {
             let me = self.clone();
             Arc::new(move || me.status())
         };
+        let (updater, runtime) = (self.updater.clone(), tokio::runtime::Handle::current());
+        std::thread::spawn(move || control::serve(updater, runtime));
         tokio::select! {
+            _ = self.clone().update_loop() => {}
             _ = self.link.clone().run(handler, status) => {}
             _ = self.clone().consume_events(rx) => {}
             _ = self.clone().selftest_loop() => {}
@@ -124,9 +137,9 @@ impl Agent {
             "decoys": self.cfg.decoy_dirs.len(),
             "started": self.started.format("%Y-%m-%dT%H:%M:%S%.6f+00:00").to_string(),
             "pet": self.pet_mood(),
-            "update": "",
-            "update_state": "idle",
-            "update_error": "",
+            "update": self.updater.available(),
+            "update_state": self.updater.state(),
+            "update_error": self.updater.error(),
         })
     }
 
@@ -323,6 +336,19 @@ impl Agent {
             "screenshot" | "apps" => self.look_at_desktop(action).await,
             "pet" => result(self.act_pet(args["mood"].as_str().unwrap_or("").to_string(), args["text"].as_str().unwrap_or("").to_string()).await),
             "pet_off" => result(self.act_pet_off().await),
+            "update_check" => {
+                self.updater.check().await;
+                (self.updater.state() != "error", self.update_text(), Value::Null)
+            }
+            "update" => {
+                // Из бота: скачать в фоне и сразу поставить; отвечаем сразу, ход виден в статусе агента
+                log::info!("Сервер запросил обновление агента");
+                if !self.updater.is_busy() && self.updater.available().is_empty() {
+                    self.updater.check().await;
+                }
+                self.updater.start(true);
+                (self.updater.state() != "error", self.update_text(), Value::Null)
+            }
             "close" => {
                 let pid = args["pid"].as_u64().unwrap_or(0) as u32;
                 result(self.act_close(pid, args["hwnd"].as_i64().unwrap_or(0)).await)
@@ -367,6 +393,39 @@ impl Agent {
         match &*self.pet.lock().unwrap() {
             Some((pid, mood)) if win::exe_path(*pid).is_some() => mood.clone(),
             _ => String::new(),
+        }
+    }
+
+    async fn update_loop(self: Arc<Self>) {
+        let data_dir = self.cfg.data_dir.clone();
+        if let Some(previous) = update::take_reopen_flag(&data_dir) {
+            // Обновлялись из окна DeepSec — открываем его снова, с новой версией и сообщением об успехе
+            tokio::time::sleep(REOPEN_DELAY).await;
+            let opened = tokio::task::spawn_blocking(move || desktop::start_in_user_session(&["ui", "--updated-from", &previous])).await;
+            if let Ok(Err(e)) = opened {
+                log::warn!("Не удалось снова открыть окно DeepSec: {e:#}");
+            }
+        }
+        tokio::time::sleep(UPDATE_FIRST_CHECK).await;
+        let dir = data_dir.clone();
+        let _ = tokio::task::spawn_blocking(move || update::cleanup(&dir)).await; // хвосты прошлого обновления
+        loop {
+            self.updater.check().await;
+            if !self.updater.error().is_empty() {
+                log::warn!("Проверка обновлений: {}", self.updater.error());
+            }
+            tokio::time::sleep(UPDATE_CHECK_INTERVAL).await;
+        }
+    }
+
+    fn update_text(&self) -> String {
+        let (state, available) = (self.updater.state(), self.updater.available());
+        match state.as_str() {
+            "error" => format!("⬆️ Обновление: не удалось — {}", self.updater.error()),
+            "downloading" => format!("⬆️ Обновление: скачиваю {available} — потом агент сам установит её и перезапустится"),
+            "ready" | "installing" => format!("⬆️ Обновление: ставлю {available} — агент перезапустится примерно через минуту"),
+            _ if !available.is_empty() => format!("⬆️ Обновление: доступна версия {available}"),
+            _ => format!("⬆️ Обновление: у вас последняя версия ({VERSION})"),
         }
     }
 

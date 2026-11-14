@@ -4,7 +4,9 @@
 //! run, setup, check, uninstall, version, ui, update, desktop, pet.
 
 mod agent;
+mod brand;
 mod config;
+mod control;
 mod desktop;
 mod detector;
 mod eventlog;
@@ -17,7 +19,9 @@ mod protocol;
 mod response;
 mod state;
 mod trust;
+mod update;
 mod win;
+mod window;
 mod winacl;
 mod winevent;
 
@@ -49,6 +53,12 @@ enum Command {
         what: String,
         /// Для close: PID и HWND окна.
         args: Vec<String>,
+    },
+    /// Окно DeepSec: состояние агента и обновление с прогрессом.
+    Ui {
+        /// Служебная: после обновления из окна.
+        #[arg(long, default_value = "")]
+        updated_from: String,
     },
     /// Пиксельный «Большой глаз» в углу экрана (агент запускает его по команде из бота).
     Pet {
@@ -93,6 +103,7 @@ fn main() {
         }
         Command::Desktop { what, args } => desktop::helper_main(&what, &args),
         Command::Pet { mood, text, minutes } => pet::main(&mood, &text, minutes),
+        Command::Ui { updated_from } => window::main(&updated_from),
     };
     if cli.pause {
         println!("\nНажмите Enter, чтобы закрыть окно…");
