@@ -20,7 +20,7 @@ from urllib.parse import urlsplit, urlunsplit
 import psutil
 from dotenv import dotenv_values
 
-from . import winacl
+from . import update, winacl
 from .config import DEFAULT_DATA_DIR, DEFAULT_TRUSTED, PROJECT_DIR, parse_trusted, split_list
 from .protocol import AGENT_PATH, normalize_fingerprint
 from .trust import parse_subject, read_signature, signer_matches
@@ -274,6 +274,7 @@ def uninstall() -> int:
         return 1
     for args in (("/End",), ("/Delete", "/F")):
         subprocess.run(["schtasks", *args, "/TN", TASK_NAME], capture_output=True, creationflags=NO_WINDOW)
+    subprocess.run(["schtasks", "/Delete", "/F", "/TN", update.TASK_NAME], capture_output=True, creationflags=NO_WINDOW)
 
     data_dir = Path(DEFAULT_DATA_DIR)
     state = AgentState.load(data_dir / "state.json")

@@ -13,7 +13,7 @@ from typing import Any
 
 import psutil
 
-from . import __version__, desktop, response, winacl
+from . import __version__, desktop, response, update, winacl
 from .config import Config
 from .detector import Detector, norm_path
 from .incidents import Incident, Kind, Severity
@@ -33,6 +33,8 @@ NOTIFY_DELAY = 1.5  # сек: даём стилеру «дочитать», чт
 SELFTEST_TIMEOUT = 15
 # Проводник держит рабочий стол и панель задач: его окна закрываем только мягко, процесс не завершаем.
 NEVER_FORCE = frozenset({"explorer.exe"})
+UPDATE_FIRST_CHECK = 120  # сек после старта: к этому времени установщик, перезапустивший агента, уже вышел
+UPDATE_CHECK_INTERVAL = 6 * 3600
 
 
 class Agent:
@@ -52,6 +54,7 @@ class Agent:
         self._recent: dict[tuple, tuple[Incident, float]] = {}
         self._tasks: set[asyncio.Task] = set()
         self._pet: tuple[int, str] | None = None  # (PID, настроение) питомца на экране
+        self.update_available = ""  # новая версия из релизов GitHub, если есть
 
     # ---------- запуск ----------
 
@@ -66,8 +69,28 @@ class Agent:
                 tg.create_task(self._consume_events())
                 tg.create_task(self._selftest_loop())
                 tg.create_task(self._watch_remote_tools())
+                tg.create_task(self._update_loop())
         finally:
             subscription.close()
+
+    async def _update_loop(self) -> None:
+        await asyncio.sleep(UPDATE_FIRST_CHECK)
+        await asyncio.to_thread(update.cleanup, self.cfg.data_dir)  # хвосты прошлого обновления
+        while True:
+            await self.check_update()
+            await asyncio.sleep(UPDATE_CHECK_INTERVAL)
+
+    async def check_update(self) -> str:
+        """Есть ли новая версия в релизах GitHub. Запоминает её — бот покажет кнопку «Обновить»."""
+        try:
+            release = await asyncio.to_thread(update.latest_release, self.cfg.update_repo)
+        except Exception as e:  # что бы ни случилось с GitHub, защита работать не перестаёт
+            log.warning("Проверка обновлений: %s", e)
+            return f"⬆️ Обновления: не удалось проверить — {e}"
+        newer = release is not None and update.is_newer(release.version, __version__)
+        self.update_available = release.version if newer else ""
+        self.link.push_status()
+        return f"⬆️ Обновления: доступна версия {release.version}" if newer else f"⬆️ Обновления: у вас последняя ({__version__})"
 
     def _reapply_audit(self) -> None:
         # Если вы перелогинились в Telegram, папка аккаунта в tdata новая и без аудита — повесим заново.
@@ -91,6 +114,7 @@ class Agent:
             "decoys": len(self.cfg.decoy_dirs),
             "started": self.started.isoformat(),
             "pet": self.pet_mood(),
+            "update": self.update_available,
         }
 
     # ---------- обработка событий ----------
@@ -230,6 +254,11 @@ class Agent:
                 return self._result(await self.act_pet_off())
             case "close":
                 return self._result(await self.act_close(int(args.get("pid") or 0), int(args.get("hwnd") or 0)))
+            case "update_check":
+                text = await self.check_update()
+                return "не удалось" not in text, text, None
+            case "update":
+                return self._result(await self.act_update())
         return False, f"неизвестная команда {action}", None
 
     async def look_at_desktop(self, what: str) -> tuple[bool, str, Any]:
@@ -347,6 +376,13 @@ class Agent:
             killed = await asyncio.to_thread(response.kill_tree, pid, path)
             return f"{name} не закрылся сам за {desktop.CLOSE_WAIT} с — {killed}"
         return await self._safe("✖ Окно", do())
+
+    async def act_update(self) -> str:
+        """Скачать новую версию, сверить SHA-256 и поставить тихо — настройки остаются. Агент перезапустится."""
+        async def do() -> str:
+            log.info("Сервер запросил обновление агента")
+            return await asyncio.to_thread(update.update, __version__, self.cfg.data_dir, self.cfg.update_repo)
+        return await self._safe("⬆️ Обновление", do())
 
     def pet_mood(self) -> str:
         """Настроение питомца на экране или пустая строка (его убрали, вышел срок, пользователь вышел)."""

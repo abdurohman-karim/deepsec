@@ -55,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("check", help="диагностика: где tdata, кем подписан Telegram.exe")
     sub.add_parser("uninstall", help="убрать задачу, правила брандмауэра, ловушки и настройки")
     sub.add_parser("version", help="версия; заодно проверяет, что сборка цела")
+    sub.add_parser("ui", help="окно DeepSec: версия, состояние агента, обновление")
+    sub.add_parser("update", help="поставить новую версию из релизов GitHub, сохранив настройки (от администратора)")
     desktop_cmd = sub.add_parser("desktop", help="служебная: агент запускает её в сеансе пользователя")
     desktop_cmd.add_argument("what", choices=("screenshot", "apps", "close"))
     desktop_cmd.add_argument("args", nargs="*", help="для close: PID и HWND окна")
@@ -87,6 +89,10 @@ def _dispatch(args: argparse.Namespace) -> int:
         from . import desktop
 
         return desktop.helper_main(args.what, args.args)
+    if args.command in ("ui", "update"):
+        from . import window
+
+        return window.main() if args.command == "ui" else window.update_main()
     if args.command == "pet":
         from . import pet
 
@@ -97,7 +103,7 @@ def _dispatch(args: argparse.Namespace) -> int:
         # Импорт проверяет, что в сборке PyInstaller есть всё нужное агенту (CI запускает это после сборки).
         windows_only = ("win32evtlog", "win32ts", "win32profile", "win32pipe", "win32file", "win32event",
                         "win32service", "win32gui", "win32process", "PIL.ImageGrab")
-        for module in ("deepsec.agent", "deepsec.setup_win", "deepsec.pet",
+        for module in ("deepsec.agent", "deepsec.setup_win", "deepsec.pet", "deepsec.window", "tkinter",
                        *(windows_only if sys.platform == "win32" else ())):
             importlib.import_module(module)
         print(__version__)

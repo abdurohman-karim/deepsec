@@ -63,6 +63,7 @@ class Config:
     failed_logon_window: int = 300
     selftest_interval: int = 600
     process_poll_interval: float = 3.0
+    update_repo: str = "abdurohman-karim/deepsec"  # откуда брать обновления (GitHub Releases)
 
     @property
     def canary_file(self) -> str:
@@ -101,4 +102,5 @@ class Config:
             failed_logon_window=int(env.get("FAILED_LOGON_WINDOW") or 300),
             selftest_interval=int(env.get("SELFTEST_INTERVAL") or 600),
             process_poll_interval=float(env.get("PROCESS_POLL_INTERVAL") or 3.0),
+            update_repo=env.get("UPDATE_REPO") or "abdurohman-karim/deepsec",
         )

@@ -324,6 +324,7 @@ AGENT_ACTIONS = {
     "lock": "lock", "isolate": "isolate", "unisolate": "unisolate", "arm": "arm", "disarm": "disarm",
     "selftest": "selftest", "unblock": "unblock", "unblock_all": "unblock",
     "pet_on": "pet", "pet_say": "pet", "pet_off": "pet_off", "close": "close",
+    "update": "update", "update_check": "update_check",
 }
 INCIDENT_ACTIONS = ("kill", "block", "quarantine", "trust")
 

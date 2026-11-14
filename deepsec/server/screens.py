@@ -21,7 +21,7 @@ AFTER = {
     "terminate": "home", "lockdown_off": "home",
     "sess_kill": "sessions", "sess_trust": "sess", "sess_untrust": "sess",
     "pet_on": "pet", "pet_off": "pet", "pet_say": "pet", "pet_text": "pet",
-    "close": "apps",
+    "close": "apps", "update": "pc", "update_check": "pc",
 }
 SCREENS = frozenset({"home", "pc", "blocks", "incidents", "inc", "sessions", "sess", "help",
                      "confirm_isolate", "confirm_terminate", "pet", "close_q"})

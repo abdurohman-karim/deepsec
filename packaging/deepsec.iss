@@ -34,13 +34,16 @@ Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"
 Source: "..\dist\DeepSecAgent\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
+Name: "{group}\DeepSec"; Filename: "{app}\DeepSecAgent.exe"; Parameters: "ui"
 Name: "{group}\Настроить DeepSec"; Filename: "{app}\DeepSecAgent.exe"; Parameters: "setup --pause"
 Name: "{group}\Проверить DeepSec"; Filename: "{app}\DeepSecAgent.exe"; Parameters: "check --pause"
 Name: "{group}\Удалить DeepSec"; Filename: "{uninstallexe}"
 
 [Run]
 ; Окно консоли остаётся открытым до Enter (--pause): видно ход настройки и ошибки, если они будут.
-Filename: "{app}\DeepSecAgent.exe"; Parameters: "{code:SetupParams}"; StatusMsg: "Настраиваю защиту…"; Flags: waituntilterminated
+Filename: "{app}\DeepSecAgent.exe"; Parameters: "{code:SetupParams}"; StatusMsg: "Настраиваю защиту…"; Flags: waituntilterminated; Check: not WizardSilent
+; Тихое обновление (кнопка «Обновить» в окне DeepSec или в боте): настройки и задача уже есть — только запускаем агента.
+Filename: "{sys}\schtasks.exe"; Parameters: "/Run /TN ""{#TaskName}"""; Flags: runhidden waituntilterminated; Check: WizardSilent
 
 [UninstallRun]
 Filename: "{app}\DeepSecAgent.exe"; Parameters: "uninstall"; RunOnceId: "DeepSecUninstall"; Flags: runhidden waituntilterminated
@@ -60,6 +63,29 @@ begin
   ServerPage.Add('Порт агентов (LISTEN_PORT, пусто — 8443 или прежний):', False);
   ServerPage.Add('Отпечаток сертификата (SHA-256):', False);
   ServerPage.Add('AGENT_TOKEN:', True);
+end;
+
+{ Настройки от прошлой установки: адрес и токен уже есть — страницу подключения при обновлении не показываем. }
+function HasConfig: Boolean;
+var
+  Lines: TArrayOfString;
+  I: Integer;
+  Url, Token: Boolean;
+begin
+  Url := False;
+  Token := False;
+  if LoadStringsFromFile(ExpandConstant('{commonappdata}\DeepSec\.env'), Lines) then
+    for I := 0 to GetArrayLength(Lines) - 1 do
+    begin
+      if Pos('SERVER_URL=', Lines[I]) = 1 then Url := Length(Lines[I]) > Length('SERVER_URL=');
+      if Pos('AGENT_TOKEN=', Lines[I]) = 1 then Token := Length(Lines[I]) > Length('AGENT_TOKEN=');
+    end;
+  Result := Url and Token;
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := (PageID = ServerPage.ID) and HasConfig;
 end;
 
 function Quote(S: String): String;

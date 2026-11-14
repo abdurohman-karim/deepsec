@@ -80,6 +80,8 @@ def pc(agent: AgentLink | None) -> InlineKeyboardMarkup:
                     else [_b("🟢 Включить авто-реакцию", "arm", name)])
         rows.append([_b(f"🧱 Блокировки ({len(st.get('blocked') or {})})", "blocks", name),
                      _b("🧪 Самопроверка", "selftest", name)])
+        rows.append([_b(f"⬆️ Установить агента {st['update']}", "update", name)] if st.get("update")
+                    else [_b("🔎 Есть ли новая версия агента?", "update_check", name)])
     rows.append([_b("🔄 Обновить", "pc", name), *_back()])
     return _markup(*rows)
 

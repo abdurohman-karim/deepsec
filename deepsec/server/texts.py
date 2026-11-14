@@ -168,6 +168,9 @@ def pc(agent: AgentLink | None, notice: str = "") -> str:
         ]
         if st.get("pet") in PET_LABELS:
             lines.append(f"👁 Глаз на экране: {PET_LABELS[st['pet']]}")
+        if st.get("update"):
+            lines.append(f"⬆️ Вышла версия агента {escape(str(st['update']))} — обновится одной кнопкой, "
+                         "настройки сохранятся")
     return _with_notice("\n".join(lines), notice)
 
 
