@@ -176,6 +176,11 @@ def test_bot_update_downloads_and_installs_in_background(agent, monkeypatch, fro
         ok, text, _ = await agent.execute("update", {})
         assert ok and "0.7.0" in text
         await wait_state(agent.updater, "installing")
+        # «installing» выставляется до запуска установщика в отдельном потоке — ждём сам запуск
+        for _ in range(200):
+            if agent.updater.installed:
+                break
+            await asyncio.sleep(0.01)
 
     asyncio.run(scenario())
     assert agent.updater.installed == ["DeepSecSetup-0.7.0.exe"]
