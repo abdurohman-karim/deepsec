@@ -25,7 +25,8 @@ import psutil
 from .config import PROJECT_DIR
 
 WHAT = ("screenshot", "apps")
-HELPER_TIMEOUT = 25  # сек: сервер ждёт ответа агента 40 с
+HELPER_TIMEOUT = 30  # сек: сервер ждёт ответа агента 60 с — агент успеет сказать, что помощник завис
+BACKGROUND_BUDGET = 3.0  # сек на опрос фоновых процессов в «Что запущено»
 MAX_SIDE = 2560  # Telegram всё равно ужмёт фото до 2560 px по длинной стороне
 JPEG_QUALITY = 70
 MAX_TITLE = 100
@@ -247,8 +248,26 @@ def collect(what: str) -> dict[str, Any]:
             data.update(_screenshot())
     else:
         data["windows"] = windows
-        data["background"] = background_names(_session_processes(), {w["exe"].lower() for w in windows})
+        data["background"], complete = _background({w["exe"].lower() for w in windows})
+        if not complete:
+            data["background_partial"] = True
     return data
+
+
+def _background(window_exes: set[str], budget: float = BACKGROUND_BUDGET) -> tuple[list[str], bool]:
+    """Фоновые программы — не дольше budget секунд. Под тяжёлой нагрузкой (например, распаковка игры)
+    опрос процессов растягивается на десятки секунд; тогда отдаём то, что успели, а поток бросаем."""
+    found: list[tuple[str, str]] = []
+    done = threading.Event()
+
+    def scan() -> None:
+        for item in _session_processes():
+            found.append(item)
+        done.set()
+
+    threading.Thread(target=scan, daemon=True).start()
+    complete = done.wait(budget)
+    return background_names(list(found), window_exes), complete
 
 
 def close_window(pid: int, hwnd: int, wait: float = CLOSE_WAIT) -> dict[str, Any]:

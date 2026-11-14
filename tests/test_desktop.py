@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import dataclasses
+import time
 
 import pytest
 
@@ -42,6 +43,21 @@ def test_background_skips_windows_processes_and_windowed_apps():
         ("secret.exe", ""),  # путь недоступен — не показываем
     ]
     assert desktop.background_names(processes, {"chrome.exe"}, r"C:\Windows") == ["Discord.exe", "steam.exe"]
+
+
+def test_slow_process_scan_returns_what_it_has(monkeypatch):
+    def stuck():
+        yield "steam.exe", r"C:\Steam\steam.exe"
+        time.sleep(5)  # процесс, опрос которого завис под нагрузкой
+        yield "late.exe", r"C:\late.exe"
+
+    monkeypatch.setattr(desktop, "_session_processes", stuck)
+    started = time.monotonic()
+    names, complete = desktop._background(set(), budget=0.3)
+    assert time.monotonic() - started < 2 and names == ["steam.exe"] and not complete
+
+    partial = {**APPS, "background": names, "background_partial": True}
+    assert "не все — компьютер сильно загружен" in texts.apps("HOME-PC", CommandResult(True, "", partial))
 
 
 def test_helper_command_from_sources():

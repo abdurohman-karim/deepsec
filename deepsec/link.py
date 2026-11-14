@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -93,11 +94,19 @@ class Link:
             await ws.send_json({"type": "status", "status": self._status()})
 
     async def _execute(self, ws: aiohttp.ClientWebSocketResponse, data: dict) -> None:
+        action = str(data.get("action"))
+        started = time.monotonic()
         try:
-            ok, text, payload = await self._on_command(str(data.get("action")), dict(data.get("args") or {}))
+            ok, text, payload = await self._on_command(action, dict(data.get("args") or {}))
         except Exception as e:
-            log.exception("Команда %s упала", data.get("action"))
+            log.exception("Команда %s упала", action)
             ok, text, payload = False, f"ошибка — {e}", None
+        # Время и итог каждой команды: по ним видно, если ПК тормозит или помощник завис
+        took = time.monotonic() - started
+        if ok:
+            log.info("Команда %s выполнена за %.1f с", action, took)
+        else:
+            log.warning("Команда %s не удалась за %.1f с: %s", action, took, text)
         try:
             await ws.send_json({"type": "result", "id": data.get("id"), "ok": ok, "text": text,
                                 "data": payload, "status": self._status()})

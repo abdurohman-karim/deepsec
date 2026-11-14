@@ -227,8 +227,9 @@ def apps(name: str, result: CommandResult, notice: str = "") -> str:
         mark = "▶️" if w.get("active") else ("➖" if w.get("minimized") else "•")
         lines.append(f"{mark} {escape(w.get('title', ''))} — <code>{escape(w.get('exe', '?'))}</code>")
     background = data.get("background") or []
-    if background:
-        lines.append("\n<b>В фоне:</b> " + ", ".join(f"<code>{escape(n)}</code>" for n in background))
+    partial = " (не все — компьютер сильно загружен)" if data.get("background_partial") else ""
+    if background or partial:
+        lines.append(f"\n<b>В фоне{partial}:</b> " + ", ".join(f"<code>{escape(n)}</code>" for n in background))
     hint = " · ✖ — закрыть окно" if any(w.get("hwnd") for w in windows) else ""
     lines.append(f"\n🕒 {local(time.time()):%H:%M:%S} · ▶️ активное окно, ➖ свёрнуто{hint}")
     return _with_notice(_fit("\n".join(lines)), notice)

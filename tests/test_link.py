@@ -42,7 +42,8 @@ async def start_hub(token: str):
     return hub, events, runner, f"ws://127.0.0.1:{port}/agent"
 
 
-def test_incident_delivery_and_command_roundtrip(cfg, tmp_path):
+def test_incident_delivery_and_command_roundtrip(cfg, tmp_path, caplog):
+    caplog.set_level("INFO", logger="deepsec.link")
     async def scenario():
         hub, events, runner, url = await start_hub("secret-token")
         outbox = Outbox(tmp_path / "outbox.json")
@@ -76,6 +77,7 @@ def test_incident_delivery_and_command_roundtrip(cfg, tmp_path):
     assert commands == [("lock", {})]
     assert result.ok and result.text == "экран заблокирован"
     assert hub.agents["HOME-PC"].status == {"armed": True}
+    assert any("Команда lock выполнена за" in r.message for r in caplog.records)  # время каждой команды в журнале
 
 
 def test_wrong_token_is_rejected(cfg, tmp_path):
