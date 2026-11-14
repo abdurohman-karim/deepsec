@@ -18,13 +18,15 @@ use crate::link::{CommandFuture, CommandHandler, CommandResult, Link, StatusFn};
 use crate::monitors::RemoteToolWatcher;
 use crate::state::{AgentState, Journal, Outbox};
 use crate::trust::{TrustChecker, sha256_file};
-use crate::{VERSION, response, win, winacl, winevent};
+use crate::{VERSION, desktop, response, win, winacl, winevent};
 
 /// Повторные чтения тем же процессом в течение минуты дописываются в первый инцидент.
 const MERGE_WINDOW: Duration = Duration::from_secs(60);
 /// Даём стилеру «дочитать», чтобы в уведомлении был полный список файлов.
 const NOTIFY_DELAY: Duration = Duration::from_millis(1500);
 const SELFTEST_TIMEOUT: Duration = Duration::from_secs(15);
+/// Проводник держит рабочий стол и панель задач: его окна закрываем только мягко, процесс не завершаем.
+const NEVER_FORCE: [&str; 1] = ["explorer.exe"];
 
 type MergeKey = (Kind, Option<u32>, Option<String>);
 
@@ -314,8 +316,54 @@ impl Agent {
             "lock" => result(self.act_lock().await),
             "isolate" => result(self.act_isolate().await),
             "unisolate" => result(self.act_unisolate().await),
+            "screenshot" | "apps" => self.look_at_desktop(action).await,
+            "close" => {
+                let pid = args["pid"].as_u64().unwrap_or(0) as u32;
+                result(self.act_close(pid, args["hwnd"].as_i64().unwrap_or(0)).await)
+            }
             _ => (false, format!("неизвестная команда {action}"), Value::Null),
         }
+    }
+
+    /// Скриншот или список программ — из сеанса того, кто сейчас за компьютером.
+    async fn look_at_desktop(&self, what: &str) -> CommandResult {
+        log::info!("Сервер запросил {}", if what == "screenshot" { "скриншот экрана" } else { "список программ" });
+        let what_owned = what.to_string();
+        let data = tokio::task::spawn_blocking(move || desktop::run_in_user_session(&["desktop", &what_owned])).await;
+        match data {
+            Ok(Ok(mut data)) => match data.as_object_mut().and_then(|d| d.remove("error")) {
+                Some(error) => (false, error.as_str().unwrap_or("ошибка").to_string(), data),
+                None => (true, String::new(), data),
+            },
+            Ok(Err(e)) => (false, format!("{e:#}"), Value::Null),
+            Err(e) => (false, format!("ошибка — {e}"), Value::Null),
+        }
+    }
+
+    /// Закрыть окно со страницы «Что запущено»: сначала как крестиком, не вышло — завершить процесс.
+    async fn act_close(self: &Arc<Self>, pid: u32, hwnd: i64) -> String {
+        let me = self.clone();
+        self.safe("✖ Окно", move || {
+            log::info!("Сервер закрывает окно {hwnd} процесса {pid}");
+            let data = desktop::run_in_user_session(&["desktop", "close", &pid.to_string(), &hwnd.to_string()])?;
+            if let Some(error) = data["error"].as_str() {
+                anyhow::bail!("{error}");
+            }
+            let name = data["exe"].as_str().map(String::from).unwrap_or_else(|| format!("PID {pid}"));
+            if data["closed"] == true {
+                return Ok(format!("{name} закрыт"));
+            }
+            let path = data["path"].as_str().unwrap_or("").to_string();
+            if NEVER_FORCE.contains(&response::basename(&path).to_lowercase().as_str())
+                || response::is_protected(Some(pid), &path)
+                || norm_path(&path) == norm_path(&me.own_exe)
+            {
+                return Ok(format!("{name} не закрылся сам (ждёт ответа в своём окне?) — принудительно не закрываю"));
+            }
+            let killed = response::kill_tree(pid, Some(&path));
+            Ok(format!("{name} не закрылся сам за {} с — {killed}", desktop::CLOSE_WAIT.as_secs()))
+        })
+        .await
     }
 
     async fn safe<F>(&self, label: &str, work: F) -> String

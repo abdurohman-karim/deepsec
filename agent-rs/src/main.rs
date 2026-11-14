@@ -1,10 +1,11 @@
-//! DeepSec — Windows-агент защиты сессий Telegram Desktop (Rust-версия Python-агента deepsec/).
+﻿//! DeepSec — Windows-агент защиты сессий Telegram Desktop (Rust-версия Python-агента deepsec/).
 //!
 //! Команды и файлы те же, что у Python-агента, — установщик, задача планировщика и сервер не меняются:
 //! run, setup, check, uninstall, version, ui, update, desktop, pet.
 
 mod agent;
 mod config;
+mod desktop;
 mod detector;
 mod eventlog;
 mod incidents;
@@ -41,6 +42,13 @@ enum Command {
     Run,
     /// Версия.
     Version,
+    /// Служебная: агент запускает её в сеансе пользователя.
+    Desktop {
+        #[arg(value_parser = ["screenshot", "apps", "close"])]
+        what: String,
+        /// Для close: PID и HWND окна.
+        args: Vec<String>,
+    },
 }
 
 fn run() -> i32 {
@@ -71,6 +79,7 @@ fn main() {
             println!("{VERSION}");
             0
         }
+        Command::Desktop { what, args } => desktop::helper_main(&what, &args),
     };
     if cli.pause {
         println!("\nНажмите Enter, чтобы закрыть окно…");
