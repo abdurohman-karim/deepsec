@@ -7,6 +7,7 @@ CI на каждую новую версию публикует релиз vX.Y.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -15,11 +16,13 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 DEFAULT_REPO = "abdurohman-karim/deepsec"
 TASK_NAME = "DeepSec Update"
+REOPEN_FLAG = "reopen-window"  # обновлялись из окна — после перезапуска агент откроет его снова
 ASSET_RE = re.compile(r"^DeepSecSetup-(\d+\.\d+\.\d+)\.exe$")
 TIMEOUT = 30
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -84,16 +87,21 @@ def latest_release(repo: str = DEFAULT_REPO) -> Release | None:
         raise UpdateError(f"GitHub не ответил: {e}") from e
 
 
-def download(release: Release, folder: Path) -> Path:
+def download(release: Release, folder: Path, progress: Callable[[int, int], None] | None = None) -> Path:
+    """Скачать установщик и сверить SHA-256. progress(скачано, всего) — для полосы загрузки в окне."""
     folder.mkdir(parents=True, exist_ok=True)
     target = folder / release.name
     digest = hashlib.sha256()
     request = urllib.request.Request(release.url, headers={"User-Agent": "DeepSec-agent"})
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT) as response, target.open("wb") as f:
-            while chunk := response.read(1 << 20):
+            total, done = int(response.headers.get("Content-Length") or 0), 0
+            while chunk := response.read(256 * 1024):
                 digest.update(chunk)
                 f.write(chunk)
+                done += len(chunk)
+                if progress:
+                    progress(done, total)
     except OSError as e:
         target.unlink(missing_ok=True)
         raise UpdateError(f"не удалось скачать {release.name}: {e}") from e
@@ -131,6 +139,112 @@ def update(current: str, data_dir: str, repo: str = DEFAULT_REPO) -> str:
     installer = download(release, folder)
     install(installer, folder)
     return f"{current} → {release.version}: установщик скачан, SHA-256 совпал, ставлю. Агент перезапустится примерно через минуту"
+
+
+class Updater:
+    """Обновление в фоне: проверка → загрузка с прогрессом → установка по команде.
+
+    Состояние видят окно DeepSec (через локальный канал агента) и бот (в статусе агента). Окно ставит
+    обновление само, только когда пользователь нажал «Перезапустить», бот — сразу после загрузки.
+    """
+
+    BUSY = frozenset({"checking", "downloading", "installing"})
+
+    def __init__(self, current: str, data_dir: str, repo: str = DEFAULT_REPO,
+                 on_change: Callable[[], None] | None = None):
+        self.current, self.repo = current, repo
+        self.folder = Path(data_dir) / "updates"
+        self.on_change = on_change or (lambda: None)
+        # idle | checking | latest | available | downloading | ready | installing | error
+        self.state = "idle"
+        self.release: Release | None = None
+        self.done = self.total = 0
+        self.error = ""
+        self.installer: Path | None = None
+        self._task: asyncio.Task | None = None
+
+    @property
+    def available(self) -> str:
+        """Новая версия, если она есть в релизах."""
+        return self.release.version if self.release and is_newer(self.release.version, self.current) else ""
+
+    def snapshot(self) -> dict:
+        return {"version": self.current, "state": self.state, "latest": self.release.version if self.release else "",
+                "available": self.available, "done": self.done, "total": self.total, "error": self.error}
+
+    def _set(self, state: str, error: str = "") -> None:
+        self.state, self.error = state, error
+        self.on_change()
+
+    async def check(self) -> None:
+        if self.state in self.BUSY or self.state == "ready":
+            return
+        self._set("checking")
+        try:
+            self.release = await asyncio.to_thread(latest_release, self.repo)
+        except Exception as e:  # что бы ни случилось с GitHub, защита работать не перестаёт
+            self._set("error", str(e))
+            return
+        self._set("available" if self.available else "latest")
+
+    def start(self, install_after: bool = False) -> bool:
+        """Начать загрузку в фоне. False — уже идёт, уже скачано или обновлять нечего."""
+        if not can_update():
+            self._set("error", "агент запущен из исходников — обновляйте его через git pull")
+            return False
+        if self.state in self.BUSY or not self.available:
+            return False
+        if self.state == "ready":
+            if install_after:
+                self._task = asyncio.ensure_future(self._install_quietly())
+            return install_after
+        self._task = asyncio.ensure_future(self._download(install_after))
+        return True
+
+    async def _download(self, install_after: bool) -> None:
+        self.done, self.total = 0, 0
+        self._set("downloading")
+        try:
+            self.installer = await asyncio.to_thread(download, self.release, self.folder, self._progress)
+        except Exception as e:
+            self._set("error", str(e))
+            return
+        self._set("ready")
+        if install_after:
+            await self._install_quietly()
+
+    def _progress(self, done: int, total: int) -> None:
+        self.done, self.total = done, total  # окно само опрашивает — без лишних сообщений серверу
+
+    async def _install_quietly(self) -> None:
+        try:
+            await self.install()
+        except UpdateError:
+            pass  # ошибка уже в self.error — её увидят бот и окно
+
+    async def install(self, reopen_window: bool = False) -> None:
+        """Запустить установку скачанного. Установщик остановит агента и запустит уже новую версию."""
+        if self.state != "ready" or self.installer is None:
+            raise UpdateError("сначала скачайте обновление")
+        self._set("installing")
+        if reopen_window:
+            (self.folder / REOPEN_FLAG).write_text(self.current, "utf-8")
+        try:
+            await asyncio.to_thread(install, self.installer, self.folder)
+        except Exception as e:
+            self._set("error", str(e))
+            raise UpdateError(str(e)) from e
+
+
+def take_reopen_flag(data_dir: str) -> str | None:
+    """После обновления из окна: с какой версии обновились (окно откроется снова и скажет об этом)."""
+    flag = Path(data_dir) / "updates" / REOPEN_FLAG
+    try:
+        previous = flag.read_text("utf-8").strip()
+        flag.unlink()
+        return previous
+    except OSError:
+        return None
 
 
 def cleanup(data_dir: str) -> None:

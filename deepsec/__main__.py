@@ -55,7 +55,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("check", help="диагностика: где tdata, кем подписан Telegram.exe")
     sub.add_parser("uninstall", help="убрать задачу, правила брандмауэра, ловушки и настройки")
     sub.add_parser("version", help="версия; заодно проверяет, что сборка цела")
-    sub.add_parser("ui", help="окно DeepSec: версия, состояние агента, обновление")
+    ui_cmd = sub.add_parser("ui", help="окно DeepSec: состояние агента и обновление с прогрессом")
+    ui_cmd.add_argument("--updated-from", default="", help="служебная: после обновления из окна")
     sub.add_parser("update", help="поставить новую версию из релизов GitHub, сохранив настройки (от администратора)")
     desktop_cmd = sub.add_parser("desktop", help="служебная: агент запускает её в сеансе пользователя")
     desktop_cmd.add_argument("what", choices=("screenshot", "apps", "close"))
@@ -92,7 +93,7 @@ def _dispatch(args: argparse.Namespace) -> int:
     if args.command in ("ui", "update"):
         from . import window
 
-        return window.main() if args.command == "ui" else window.update_main()
+        return window.main(args.updated_from) if args.command == "ui" else window.update_main()
     if args.command == "pet":
         from . import pet
 

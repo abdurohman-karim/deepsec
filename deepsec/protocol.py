@@ -19,6 +19,10 @@ ACTIONS = frozenset({
     "status", "selftest", "arm", "disarm", "lock", "isolate", "unisolate",
     "kill", "block", "unblock", "quarantine", "trust", "screenshot", "apps", "pet", "pet_off", "close", "update_check", "update",
 })
+# Локальный канал агента для окна DeepSec (только 127.0.0.1).
+LOCAL_PORT = 47231
+LOCAL_HEADER = "X-DeepSec-Window"
+
 # Настроения пиксельного питомца на экране компьютера.
 PET_MOODS = ("watch", "happy", "angry", "sleep")
 PET_MAX_TEXT = 60

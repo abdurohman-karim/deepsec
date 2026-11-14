@@ -168,9 +168,15 @@ def pc(agent: AgentLink | None, notice: str = "") -> str:
         ]
         if st.get("pet") in PET_LABELS:
             lines.append(f"👁 Глаз на экране: {PET_LABELS[st['pet']]}")
-        if st.get("update"):
-            lines.append(f"⬆️ Вышла версия агента {escape(str(st['update']))} — обновится одной кнопкой, "
-                         "настройки сохранятся")
+        update_state, new = st.get("update_state"), escape(str(st.get("update") or ""))
+        if update_state == "downloading":
+            lines.append(f"⬆️ Скачивается версия {new} — потом агент сам её установит")
+        elif update_state in ("ready", "installing"):
+            lines.append(f"⬆️ Ставится версия {new} — агент перезапустится примерно через минуту")
+        elif update_state == "error" and st.get("update_error"):
+            lines.append(f"⚠️ Обновление не удалось: {escape(str(st['update_error']))}")
+        elif new:
+            lines.append(f"⬆️ Вышла версия агента {new} — обновится одной кнопкой, настройки сохранятся")
     return _with_notice("\n".join(lines), notice)
 
 

@@ -27,6 +27,8 @@ WizardStyle=modern
 UninstallDisplayName=DeepSec Agent
 UninstallDisplayIcon={app}\DeepSecAgent.exe
 ; Иконку и картинку мастера рисует build.ps1 (python -m deepsec.brand build)
+; Процессы DeepSecAgent.exe закрывает PrepareToInstall — Restart Manager не нужен (из другого сеанса он не может)
+CloseApplications=no
 SetupIconFile=..\build\deepsec.ico
 WizardSmallImageFile=..\build\wizard-small.bmp
 
@@ -44,9 +46,9 @@ Name: "{group}\Удалить DeepSec"; Filename: "{uninstallexe}"
 
 [Run]
 ; Окно консоли остаётся открытым до Enter (--pause): видно ход настройки и ошибки, если они будут.
+; При тихом обновлении (кнопка в окне DeepSec или в боте) настройки и задача уже есть — агента перезапускает
+; DeinitializeSetup, в том числе если установка сорвалась.
 Filename: "{app}\DeepSecAgent.exe"; Parameters: "{code:SetupParams}"; StatusMsg: "Настраиваю защиту…"; Flags: waituntilterminated; Check: not WizardSilent
-; Тихое обновление (кнопка «Обновить» в окне DeepSec или в боте): настройки и задача уже есть — только запускаем агента.
-Filename: "{sys}\schtasks.exe"; Parameters: "/Run /TN ""{#TaskName}"""; Flags: runhidden waituntilterminated; Check: WizardSilent
 
 [UninstallRun]
 Filename: "{app}\DeepSecAgent.exe"; Parameters: "uninstall"; RunOnceId: "DeepSecUninstall"; Flags: runhidden waituntilterminated
@@ -54,6 +56,7 @@ Filename: "{app}\DeepSecAgent.exe"; Parameters: "uninstall"; RunOnceId: "DeepSec
 [Code]
 var
   ServerPage: TInputQueryWizardPage;
+  AgentStopped: Boolean;
 
 procedure InitializeWizard;
 begin
@@ -114,8 +117,22 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
 begin
-  { При обновлении агент запущен от SYSTEM и держит свои файлы — останавливаем его. }
+  { При обновлении агент запущен от SYSTEM и держит свои файлы — останавливаем его. А ещё DeepSecAgent.exe
+    бывает запущен в сеансе пользователя (окно DeepSec, глаз, помощники): их Restart Manager из другого
+    сеанса закрыть не может, и замена exe срывается — завершаем все процессы DeepSecAgent.exe. }
   Exec(ExpandConstant('{sys}\schtasks.exe'), '/End /TN "{#TaskName}"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Sleep(2000);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM DeepSecAgent.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  AgentStopped := True;
+  Sleep(1500);
   Result := '';
+end;
+
+procedure DeinitializeSetup;
+var
+  ResultCode: Integer;
+begin
+  { Агента остановили — запускаем при любом исходе: обновился он или установка сорвалась и откатилась,
+    ПК не должен остаться без защиты. }
+  if AgentStopped then
+    Exec(ExpandConstant('{sys}\schtasks.exe'), '/Run /TN "{#TaskName}"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;

@@ -21,6 +21,7 @@ FILE_KINDS = (Kind.TDATA_ACCESS, Kind.DECOY_ACCESS)
 LOCK = "🔑"
 MAX_BUTTON = 48  # символов в подписи кнопки — длиннее Telegram обрезает некрасиво
 MAX_CLOSE_BUTTONS = 15
+UPDATE_BUSY = ("downloading", "ready", "installing")
 
 
 class Btn(CallbackData, prefix="b"):
@@ -80,8 +81,9 @@ def pc(agent: AgentLink | None) -> InlineKeyboardMarkup:
                     else [_b("🟢 Включить авто-реакцию", "arm", name)])
         rows.append([_b(f"🧱 Блокировки ({len(st.get('blocked') or {})})", "blocks", name),
                      _b("🧪 Самопроверка", "selftest", name)])
-        rows.append([_b(f"⬆️ Установить агента {st['update']}", "update", name)] if st.get("update")
-                    else [_b("🔎 Есть ли новая версия агента?", "update_check", name)])
+        if st.get("update_state") not in UPDATE_BUSY:  # во время обновления кнопок нет — идёт само
+            rows.append([_b(f"⬆️ Установить агента {st['update']}", "update", name)] if st.get("update")
+                        else [_b("🔎 Есть ли новая версия агента?", "update_check", name)])
     rows.append([_b("🔄 Обновить", "pc", name), *_back()])
     return _markup(*rows)
 

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import pytest
 
-from deepsec import update
-
 PIL = pytest.importorskip("PIL")
 
 
@@ -27,12 +25,18 @@ def test_icon_has_every_size_and_draws_the_eye(tmp_path):
         assert bmp.format == "BMP" and bmp.getpixel((0, 0)) == (255, 255, 255)
 
 
-def test_update_button_is_only_active_for_a_newer_release():
-    from deepsec.window import update_button_state
+def test_window_view_for_each_update_state():
+    from deepsec.window import view
 
-    newer = update.Release("0.7.0", "u", "h", "DeepSecSetup-0.7.0.exe")
-    same = update.Release("0.6.1", "u", "h", "DeepSecSetup-0.6.1.exe")
-    assert update_button_state(newer, "", "0.6.1") == (True, "⬆  Обновить до 0.7.0")
-    assert update_button_state(same, "", "0.6.1") == (False, "Обновлений нет")
-    assert update_button_state(None, "", "0.6.1") == (False, "Обновлений нет")
-    assert update_button_state(newer, "GitHub не ответил", "0.6.1") == (False, "Обновление недоступно")
+    snap = {"version": "0.6.2", "latest": "0.7.0", "available": "0.7.0", "done": 0, "total": 0, "error": ""}
+    assert view(None).action is None and "не отвечает" in view(None).status
+    assert view({**snap, "state": "checking"}).action is None
+    available = view({**snap, "state": "available"})
+    assert available.action == "download" and available.button == "Скачать 0.7.0" and available.progress is None
+    half = view({**snap, "state": "downloading", "done": 10 * 1024 * 1024, "total": 20 * 1024 * 1024})
+    assert half.action is None and half.progress == 0.5 and half.detail == "50% · 10.0 из 20.0 МБ"
+    ready = view({**snap, "state": "ready"})
+    assert ready.action == "install" and "Перезапустить" in ready.button and ready.progress == 1.0
+    assert view({**snap, "state": "error", "error": "нет сети"}).action == "check"
+    latest = view({**snap, "state": "latest", "available": "", "latest": "0.6.2"})
+    assert latest.action is None and latest.button == "Обновлений нет"  # неактивная кнопка — серая
