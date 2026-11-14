@@ -291,7 +291,9 @@ mod tests {
         let ((auth, name), seen, result) = tokio::time::timeout(Duration::from_secs(10), server).await.unwrap().unwrap();
         task.abort();
         assert_eq!((auth.as_str(), name.as_str()), ("Bearer secret-token", "HOME-PC"));
-        assert_eq!(&seen[..2], ["hello", "incident"]);
+        // Статус может уйти раньше или позже тревоги из очереди — порядок для сервера не важен
+        let seen: Vec<&String> = seen.iter().filter(|t| *t != "status").collect();
+        assert_eq!(seen[..2], ["hello", "incident"]);
         assert_eq!(result["text"], "выполнено lock");
         assert_eq!(result["status"]["armed"], true);
         assert!(link.outbox.lock().unwrap().items().is_empty()); // сервер подтвердил получение

@@ -12,6 +12,7 @@ mod incidents;
 mod link;
 mod logger;
 mod monitors;
+mod pet;
 mod protocol;
 mod response;
 mod state;
@@ -49,6 +50,17 @@ enum Command {
         /// Для close: PID и HWND окна.
         args: Vec<String>,
     },
+    /// Пиксельный «Большой глаз» в углу экрана (агент запускает его по команде из бота).
+    Pet {
+        #[arg(value_parser = protocol::PET_MOODS)]
+        mood: String,
+        /// Своя надпись вместо стандартной.
+        #[arg(long, default_value = "")]
+        text: String,
+        /// Через сколько минут исчезнуть.
+        #[arg(long, default_value_t = 120.0)]
+        minutes: f64,
+    },
 }
 
 fn run() -> i32 {
@@ -80,6 +92,7 @@ fn main() {
             0
         }
         Command::Desktop { what, args } => desktop::helper_main(&what, &args),
+        Command::Pet { mood, text, minutes } => pet::main(&mood, &text, minutes),
     };
     if cli.pause {
         println!("\nНажмите Enter, чтобы закрыть окно…");

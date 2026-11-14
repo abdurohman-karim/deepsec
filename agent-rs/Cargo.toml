@@ -10,6 +10,7 @@ name = "DeepSecAgent"
 path = "src/main.rs"
 
 [dependencies]
+ab_glyph = "0.2"
 anyhow = "1"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
@@ -49,6 +50,7 @@ windows = { version = "0.62", features = [
     "Win32_System_EventLog",
     "Win32_System_IO",
     "Win32_System_Kernel",
+    "Win32_System_LibraryLoader",
     "Win32_System_Pipes",
     "Win32_System_RemoteDesktop",
     "Win32_System_Shutdown",

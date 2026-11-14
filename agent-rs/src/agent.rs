@@ -16,6 +16,7 @@ use crate::eventlog::Subscription;
 use crate::incidents::{Incident, Kind, Severity};
 use crate::link::{CommandFuture, CommandHandler, CommandResult, Link, StatusFn};
 use crate::monitors::RemoteToolWatcher;
+use crate::protocol::{PET_MAX_TEXT, PET_MOODS};
 use crate::state::{AgentState, Journal, Outbox};
 use crate::trust::{TrustChecker, sha256_file};
 use crate::{VERSION, desktop, response, win, winacl, winevent};
@@ -42,6 +43,8 @@ pub struct Agent {
     clock: Instant,
     own_exe: String,
     recent: Mutex<HashMap<MergeKey, (Arc<Mutex<Incident>>, Instant)>>,
+    /// (PID, настроение) глаза на экране.
+    pet: Mutex<Option<(u32, String)>>,
 }
 
 impl Agent {
@@ -60,6 +63,7 @@ impl Agent {
             clock: Instant::now(),
             own_exe: win::own_exe(),
             recent: Mutex::new(HashMap::new()),
+            pet: Mutex::new(None),
             cfg,
         })
     }
@@ -119,7 +123,7 @@ impl Agent {
             "tdata": self.cfg.tdata_dirs.len(),
             "decoys": self.cfg.decoy_dirs.len(),
             "started": self.started.format("%Y-%m-%dT%H:%M:%S%.6f+00:00").to_string(),
-            "pet": "",
+            "pet": self.pet_mood(),
             "update": "",
             "update_state": "idle",
             "update_error": "",
@@ -317,11 +321,52 @@ impl Agent {
             "isolate" => result(self.act_isolate().await),
             "unisolate" => result(self.act_unisolate().await),
             "screenshot" | "apps" => self.look_at_desktop(action).await,
+            "pet" => result(self.act_pet(args["mood"].as_str().unwrap_or("").to_string(), args["text"].as_str().unwrap_or("").to_string()).await),
+            "pet_off" => result(self.act_pet_off().await),
             "close" => {
                 let pid = args["pid"].as_u64().unwrap_or(0) as u32;
                 result(self.act_close(pid, args["hwnd"].as_i64().unwrap_or(0)).await)
             }
             _ => (false, format!("неизвестная команда {action}"), Value::Null),
+        }
+    }
+
+    async fn act_pet(self: &Arc<Self>, mood: String, text: String) -> String {
+        let me = self.clone();
+        self.safe("👁 Глаз", move || {
+            if !PET_MOODS.contains(&mood.as_str()) {
+                anyhow::bail!("нет настроения «{mood}»");
+            }
+            desktop::stop_helpers("pet"); // глаз на экране всегда один
+            let clean: String = text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(PET_MAX_TEXT).collect();
+            let mut args = vec!["pet", mood.as_str()];
+            if !clean.is_empty() {
+                args.extend(["--text", clean.as_str()]);
+            }
+            let pid = desktop::start_in_user_session(&args)?;
+            *me.pet.lock().unwrap() = Some((pid, mood.clone()));
+            me.link.push_status();
+            Ok("на экране".into())
+        })
+        .await
+    }
+
+    async fn act_pet_off(self: &Arc<Self>) -> String {
+        let me = self.clone();
+        self.safe("👁 Глаз", move || {
+            let count = desktop::stop_helpers("pet");
+            *me.pet.lock().unwrap() = None;
+            me.link.push_status();
+            Ok(if count > 0 { "убран" } else { "его и так не было на экране" }.into())
+        })
+        .await
+    }
+
+    /// Настроение глаза на экране или пустая строка (его убрали, вышел срок, пользователь вышел).
+    fn pet_mood(&self) -> String {
+        match &*self.pet.lock().unwrap() {
+            Some((pid, mood)) if win::exe_path(*pid).is_some() => mood.clone(),
+            _ => String::new(),
         }
     }
 
